@@ -145,6 +145,14 @@ def parse_args() -> Dict[str, Any]:
                         help='Patience for plateau EarlyStopping (set 0 or negative to disable EarlyStopping)')
     parser.add_argument('--no_early_stopping', default=False, action='store_true',
                         help='Completely disable EarlyStopping to train for full epochs')
+    parser.add_argument('--precision', default=None, type=str,
+                        help='Override training precision: 32, 16, or 16-mixed')
+    parser.add_argument('--scheduler', default=None, choices=['poly', 'cosine'],
+                        help="Override LR scheduler: 'poly' (polynomial decay) or 'cosine' (cosine annealing)")
+    parser.add_argument('--warmup_epochs', default=None, type=int,
+                        help='Override warmup epochs count (default: from config, e.g. 5)')
+    parser.add_argument('--accumulate_grad_batches', default=None, type=int,
+                        help='Override gradient accumulation steps (default: 1)')
     parser.add_argument('--profile', default=False, action='store_true',
                         help='Enable automated B0 compute profiling callback (measures VRAM, steady speed, overhead, and runtime estimates)')
     parser.add_argument('--profile_warmup_batches', default=10, type=int,
@@ -233,6 +241,22 @@ def main():
     if args.get('learning_rate') is not None:
         cfg['train']['learning_rate'] = args['learning_rate']
         print(f"[Config Override] learning_rate -> {args['learning_rate']}")
+
+    if args.get('precision') is not None:
+        cfg['train']['precision'] = args['precision']
+        print(f"[Config Override] precision -> {args['precision']}")
+
+    if args.get('scheduler') is not None:
+        cfg['train']['scheduler'] = args['scheduler']
+        print(f"[Config Override] scheduler -> {args['scheduler']}")
+
+    if args.get('warmup_epochs') is not None:
+        cfg['train']['warmup_epochs'] = args['warmup_epochs']
+        print(f"[Config Override] warmup_epochs -> {args['warmup_epochs']}")
+
+    if args.get('accumulate_grad_batches') is not None:
+        cfg['train']['accumulate_grad_batches'] = args['accumulate_grad_batches']
+        print(f"[Config Override] accumulate_grad_batches -> {args['accumulate_grad_batches']}")
     
     if cfg.get('seed') is None:
         seed_val = int(time.time())
@@ -247,6 +271,9 @@ def main():
     # define backbone
     network = get_backbone(cfg)
 
+    scheduler_type = cfg['train'].get('scheduler', 'poly')
+    warmup_epochs = cfg['train'].get('warmup_epochs', 5)
+
     if (args['ckpt_path'] is not None) and (not args['resume']):
         seg_module = model_multimetrics.SegmentationNetwork(network,
                                                 criterion,
@@ -254,14 +281,18 @@ def main():
                                                 cfg['train']['weight_decay'],
                                                 train_step_settings=cfg['train']['step_settings'],
                                                 val_step_settings=cfg['val']['step_settings'],
-                                                ckpt_path=args['ckpt_path'])
+                                                ckpt_path=args['ckpt_path'],
+                                                scheduler_type=scheduler_type,
+                                                warmup_epochs=warmup_epochs)
     else:
         seg_module = model_multimetrics.SegmentationNetwork(network,
                                                             criterion,
                                                             cfg['train']['learning_rate'],
                                                             cfg['train']['weight_decay'],
                                                             train_step_settings=cfg['train']['step_settings'],
-                                                            val_step_settings=cfg['val']['step_settings'])
+                                                            val_step_settings=cfg['val']['step_settings'],
+                                                            scheduler_type=scheduler_type,
+                                                            warmup_epochs=warmup_epochs)
 
     # Add callbacks
     ckpt_dir = os.path.join(args['export_dir'], 'checkpoints')
@@ -277,6 +308,30 @@ def main():
         every_n_epochs=1,
         save_on_train_epoch_end=True
     )
+    # Best mIoU checkpoint
+    checkpoint_saver_val_mIoU = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        monitor='val_mIoU',
+        filename=cfg['experiment']['id'] + '_best_mIoU_epoch{epoch:02d}_{val_mIoU:.4f}',
+        mode='max',
+        save_last=False
+    )
+    # Best Weed IoU checkpoint (Target Metric for Weed Segmentation)
+    checkpoint_saver_val_weed_iou = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        monitor='val_weed_iou',
+        filename=cfg['experiment']['id'] + '_best_weedIoU_epoch{epoch:02d}_{val_weed_iou:.4f}',
+        mode='max',
+        save_last=False
+    )
+    # Best validation loss checkpoint
+    checkpoint_saver_val_loss = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        monitor='val_loss',
+        filename=cfg['experiment']['id'] + '_best_loss_epoch{epoch:02d}_{val_loss:.4f}',
+        mode='min',
+        save_last=False
+    )
     # Periodic checkpoint every 10 epochs
     checkpoint_saver_periodic = ModelCheckpoint(
         dirpath=ckpt_dir,
@@ -286,83 +341,6 @@ def main():
         save_last=False,
         save_on_train_epoch_end=True
     )
-
-    checkpoint_saver_val_loss = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        monitor='val_loss',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_loss:.4f}',
-        mode='min',
-        save_last=False)
-    checkpoint_saver_val_mIoU = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        monitor='val_mIoU',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_mIoU:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_loss = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        monitor='train_loss',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_loss:.4f}',
-        mode='min',
-        save_last=False,
-        save_on_train_epoch_end=True)
-    checkpoint_saver_train_mIoU = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        monitor='train_mIoU',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_mIoU:.4f}',
-        mode='max',
-        save_last=False)
-
-    checkpoint_saver_val_mPrecision = ModelCheckpoint(
-        monitor='val_mPrecision',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_mPrecision:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_mPrecision = ModelCheckpoint(
-        monitor='train_mPrecision',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_mPrecision:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_val_mF1 = ModelCheckpoint(
-        monitor='val_mF1',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_mF1:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_mF1 = ModelCheckpoint(
-        monitor='train_mF1',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_mF1:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_val_mAcc = ModelCheckpoint(
-        monitor='val_mAcc',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_mAcc:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_mAcc = ModelCheckpoint(
-        monitor='train_mAcc',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_mAcc:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_val_OverallAcc = ModelCheckpoint(
-        monitor='val_OverallAcc',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_OverallAcc:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_OverallAcc = ModelCheckpoint(
-        monitor='train_OverallAcc',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_OverallAcc:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_val_mRecall = ModelCheckpoint(
-        monitor='val_mRecall',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{val_mRecall:.4f}',
-        mode='max',
-        save_last=False)
-    checkpoint_saver_train_mRecall = ModelCheckpoint(
-        monitor='train_mRecall',
-        filename=cfg['experiment']['id'] + '_{epoch:02d}_{train_mRecall:.4f}',
-        mode='max',
-        save_last=False)
 
 
     my_checkpoint_savers = [var_value for var_name, var_value in locals().items() if
@@ -454,12 +432,26 @@ def main():
     except Exception:
         tb_logger = True
 
+    # Setup precision & gradient accumulation
+    raw_precision = cfg['train'].get('precision', 32)
+    if str(raw_precision) in ['16', '16-mixed', 'bf16']:
+        try:
+            train_precision = int(raw_precision) if str(raw_precision).isdigit() else raw_precision
+        except Exception:
+            train_precision = raw_precision
+    else:
+        train_precision = 32
+
+    train_accum_grad = int(cfg['train'].get('accumulate_grad_batches', 1))
+
     # Setup trainer
     trainer = Trainer(
         accelerator=cfg['train'].get('accelerator', 'auto'),
         devices=train_devices,
         strategy=train_strategy,
         benchmark=cfg['train'].get('benchmark', True),
+        precision=train_precision,
+        accumulate_grad_batches=train_accum_grad,
         default_root_dir=args['export_dir'],
         max_epochs=cfg['train']['max_epoch'],
         check_val_every_n_epoch=cfg['val']['check_val_every_n_epoch'],
@@ -477,6 +469,13 @@ def main():
         trainer.fit(seg_module, datasetmodule, ckpt_path=args['ckpt_path'])
     else:
         raise RuntimeError("Can't train any model since the settings are invalid.")
+
+    # Generate validation curves and summary report automatically
+    try:
+        from utils.plot_val_curves import generate_curves_and_summary
+        generate_curves_and_summary(args['export_dir'])
+    except Exception as e:
+        print(f"[Post-Train Notice] Automatic plot generation skipped: {e}")
 
 
 if __name__ == '__main__':

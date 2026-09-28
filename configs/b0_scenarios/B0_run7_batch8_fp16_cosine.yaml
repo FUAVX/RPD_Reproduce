@@ -1,0 +1,115 @@
+# ==============================================================================
+# B0 Scenario 7: Batch 8 + FP16 + Cosine Scheduler
+# Focus: Double batch size, enable FP16 mixed precision, adopt cosine scheduler
+# ==============================================================================
+
+seed: 1682409321
+
+experiment:
+  id: 'B0_run7_batch8_fp16_cosine'
+  description: 'Hardware + schedule exploration: batch 8, FP16, cosine decay, lr 1e-4, 100 epochs'
+
+data:
+  name: phenobench
+  path_to_dataset: ./data/PhenoBench
+  num_workers: 2
+  image_normalizer:
+    name: single_image_normalizer
+
+backbone:
+  name: RPDNet
+  num_classes: 3
+  pretrained: false
+  theta: 0.5
+  use_se: false
+  deploy: false
+  convert: false
+
+train:
+  step_settings:
+    - regular
+  max_epoch: 100
+  devices: 1
+  benchmark: True
+  loss: xentropy
+  learning_rate: 1.0e-4
+  scheduler: 'cosine'
+  warmup_epochs: 5
+  weight_decay: 2.0e-04
+  batch_size: 8
+  precision: 16
+  accumulate_grad_batches: 1
+  shuffle: true
+  
+  early_stopping:
+    mode: 'none'
+  
+  vis_train_every_x_epochs: 4096
+  postprocess_train_every_x_epochs: 4096
+
+  class_weights:
+    - 1.47
+    - 5.06
+    - 10.02
+
+  color_data_augmentations:
+    random_global_brightness:
+      min_brightness_factor: 0.6
+      max_brightness_factor: 1.4
+    random_global_contrast:
+      min_contrast_factor: 0.6
+      max_contrast_factor: 1.4
+    random_global_saturation:
+      min_saturation_factor: 0.8
+      max_saturation_factor: 1.2
+    random_global_hue:
+      min_hue_factor: -0.0125
+      max_hue_factor: 0.0125
+
+  geometric_data_augmentations:
+    random_hflip: null
+    random_vflip: null
+    random_scale:
+      min_scale: 1.0
+      max_scale: 1.1
+    random_crop:
+      height: 768
+      width: 768
+
+val:
+  step_settings:
+    - regular
+  devices: 1
+  num_nodes: 1
+  batch_size: 4
+  check_val_every_n_epoch: 5
+  vis_val_every_x_epochs: 4096
+  postprocess_val_every_x_epochs: 4096
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+test:
+  step_settings:
+    - regular
+  devices: 1
+  batch_size: 1
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+visualizers:
+  input_image_visualizer: null
+  semantic_map_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_correct_incorrect_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  ground_truth_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+
+postprocessors:
+  arg_max_classes_postprocessor: null

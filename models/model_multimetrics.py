@@ -1,5 +1,6 @@
 import os
 import pdb
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -20,13 +21,18 @@ class SegmentationNetwork(pl.LightningModule):
                  train_step_settings: Optional[List[str]] = None,
                  val_step_settings: Optional[List[str]] = None,
                  test_step_settings: Optional[List[str]] = None,
-                 ckpt_path=None): 
+                 ckpt_path=None,
+                 scheduler_type: str = 'poly',
+                 warmup_epochs: int = 5): 
         super(SegmentationNetwork, self).__init__()
 
         self.network = network
         self.criterion = criterion
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.scheduler_type = scheduler_type
+        self.warmup_epochs = warmup_epochs
+        self.val_history: List[Dict[str, Any]] = []
 
         # evaluation metrics for all classes
         self.metric_train_iou = torchmetrics.JaccardIndex(
@@ -354,6 +360,51 @@ class SegmentationNetwork(pl.LightningModule):
         self.log('val_OverallAcc', acc_micro, on_epoch=True, sync_dist=True)
         self.log('val_mRecall', mRecall, on_epoch=True, sync_dist=True)
 
+        val_soil_iou = float(iou_per_class[0].cpu()) if len(iou_per_class) > 0 else 0.0
+        val_crop_iou = float(iou_per_class[1].cpu()) if len(iou_per_class) > 1 else 0.0
+        val_weed_iou = float(iou_per_class[2].cpu()) if len(iou_per_class) > 2 else 0.0
+
+        val_weed_p = float(precision_per_class[2].cpu()) if len(precision_per_class) > 2 else 0.0
+        val_weed_r = float(recall_per_class[2].cpu()) if len(recall_per_class) > 2 else 0.0
+        val_weed_f1 = float(f1_per_class[2].cpu()) if len(f1_per_class) > 2 else 0.0
+
+        self.log('val_soil_iou', val_soil_iou, on_epoch=True, sync_dist=True)
+        self.log('val_crop_iou', val_crop_iou, on_epoch=True, sync_dist=True)
+        self.log('val_weed_iou', val_weed_iou, on_epoch=True, sync_dist=True)
+        self.log('val_weed_precision', val_weed_p, on_epoch=True, sync_dist=True)
+        self.log('val_weed_recall', val_weed_r, on_epoch=True, sync_dist=True)
+        self.log('val_weed_f1', val_weed_f1, on_epoch=True, sync_dist=True)
+
+        # Record validation history
+        current_lr = float(self.trainer.optimizers[0].param_groups[0]['lr']) if (self.trainer.optimizers and len(self.trainer.optimizers) > 0) else float(self.learning_rate)
+        train_loss_val = float(self.trainer.callback_metrics.get('train_loss', 0.0))
+        row = {
+            'epoch': epoch,
+            'train_loss': round(train_loss_val, 5),
+            'val_loss': round(float(val_loss_avg.cpu()), 5),
+            'mIoU': round(float(mIoU.cpu()), 5),
+            'soil_iou': round(val_soil_iou, 5),
+            'crop_iou': round(val_crop_iou, 5),
+            'weed_iou': round(val_weed_iou, 5),
+            'weed_precision': round(val_weed_p, 5),
+            'weed_recall': round(val_weed_r, 5),
+            'weed_f1': round(val_weed_f1, 5),
+            'lr': current_lr
+        }
+        self.val_history.append(row)
+
+        export_dir = getattr(self.trainer, 'default_root_dir', None) or getattr(self.trainer, 'log_dir', None) or '.'
+        history_csv_path = os.path.join(export_dir, 'val_history.csv')
+        try:
+            import csv
+            fieldnames = ['epoch', 'train_loss', 'val_loss', 'mIoU', 'soil_iou', 'crop_iou', 'weed_iou', 'weed_precision', 'weed_recall', 'weed_f1', 'lr']
+            with open(history_csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.val_history)
+        except Exception as e:
+            print(f"[Warning] Failed to write val_history.csv: {e}")
+
         path_to_classwise_dir = os.path.join(self.trainer.log_dir, 'val', 'evaluation', f'epoch-{epoch:06d}')
         save_metric(iou_per_class, path_to_classwise_dir, 'IoU')
         save_metric(precision_per_class, path_to_classwise_dir, 'Precision')
@@ -428,13 +479,19 @@ class SegmentationNetwork(pl.LightningModule):
 
     def lr_scaling(self, current_epoch: int) -> float:
         total_epochs = max(getattr(self.trainer, 'max_epochs', 100) or 100, 1)
-        warm_up_epochs = min(16, max(1, total_epochs // 5))
-        if current_epoch <= warm_up_epochs:
-            lr_scale = current_epoch / warm_up_epochs
+        warm_up = getattr(self, 'warmup_epochs', 5)
+        warm_up = min(warm_up, max(1, total_epochs // 2))
+
+        if current_epoch <= warm_up:
+            lr_scale = max(current_epoch / max(warm_up, 1), 1e-4)
         else:
-            denom = max(total_epochs - (warm_up_epochs + 1), 1)
-            progress = min(max((current_epoch - (warm_up_epochs + 1)) / denom, 0.0), 1.0)
-            lr_scale = pow(1.0 - progress, 3.0)
+            denom = max(total_epochs - warm_up, 1)
+            progress = min(max((current_epoch - warm_up) / denom, 0.0), 1.0)
+            sched = getattr(self, 'scheduler_type', 'poly').lower()
+            if sched == 'cosine':
+                lr_scale = 0.5 * (1.0 + math.cos(math.pi * progress))
+            else:  # 'poly'
+                lr_scale = pow(1.0 - progress, 3.0)
 
         return max(float(lr_scale), 1e-6)
 
