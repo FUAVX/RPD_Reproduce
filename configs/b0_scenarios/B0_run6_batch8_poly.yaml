@@ -1,13 +1,13 @@
 # ==============================================================================
-# B0 Scenario 7: Batch 8 + FP16 + Cosine Scheduler
-# Focus: Double batch size, enable FP16 mixed precision, adopt cosine scheduler
+# B0 Scenario 6: Batch 8 (Accumulate 2) + Poly Scheduler (Trục Batch Size)
+# Focus: Double effective batch size to 8 via accumulation (4x2) in FP32 with poly decay
 # ==============================================================================
 
 seed: 1682409321
 
 experiment:
-  id: 'B0_run7_batch8_fp16_cosine'
-  description: 'Hardware + schedule exploration: batch 8, FP16, cosine decay, lr 1e-4, 100 epochs'
+  id: 'B0_run6_batch8_poly'
+  description: 'Batch 8 exploration via accumulation: batch 4, accum 2, FP32, poly decay, lr 1e-4, 100 epochs'
 
 data:
   name: phenobench
@@ -33,12 +33,12 @@ train:
   benchmark: True
   loss: xentropy
   learning_rate: 1.0e-4
-  scheduler: 'cosine'
+  scheduler: 'poly'
   warmup_epochs: 5
   weight_decay: 2.0e-04
-  batch_size: 8
-  precision: 16
-  accumulate_grad_batches: 1
+  batch_size: 4
+  accumulate_grad_batches: 2
+  precision: 32
   shuffle: true
   
   early_stopping:
@@ -81,7 +81,7 @@ val:
     - regular
   devices: 1
   num_nodes: 1
-  batch_size: 4
+  batch_size: 2
   check_val_every_n_epoch: 5
   vis_val_every_x_epochs: 4096
   postprocess_val_every_x_epochs: 4096
