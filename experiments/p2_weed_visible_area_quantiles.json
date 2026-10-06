@@ -1,0 +1,17 @@
+{
+  "experiment": "P2_Weed_Size_Aware_CE",
+  "baseline_name": "P1_EliPRD",
+  "architecture_name": "RepDNet",
+  "dataset": "PhenoBench v1.1.0",
+  "split": "train",
+  "area_definition": "visible_pixels_per_weed_instance_after_current_effective_P1_EliPRD_geometric_pipeline_and_768x768_random_crop",
+  "seed": 20261006,
+  "crops_per_image": 32,
+  "crops_sampled": 45024,
+  "visible_weed_instances": 151502,
+  "q25": 127.0,
+  "q75": 776.0,
+  "small_rule": "area <= q25",
+  "medium_rule": "q25 < area <= q75",
+  "large_rule": "area > q75"
+}

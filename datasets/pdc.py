@@ -1,12 +1,56 @@
-from typing import Callable
+import os
+import random
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pytorch_lightning as pl
+import torch
+from PIL import Image
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 
 from datasets.augmentations_geometry import *
 from datasets.augmentations_normalize import *
 from datasets.augmentations_color import *
+
+
+def build_size_weight_map(anno: torch.Tensor,
+                          plant_instances: torch.Tensor,
+                          q25: float,
+                          q75: float,
+                          small_weight: float,
+                          medium_weight: float,
+                          large_weight: float) -> torch.Tensor:
+    """Create per-pixel WWSCE multipliers from the post-augmentation weed area.
+
+    Only pixels that are both semantic weed (class 2) and belong to a positive
+    plant-instance ID receive a size multiplier. All other pixels retain 1.0.
+    """
+    if anno.shape != plant_instances.shape:
+        raise ValueError(f"Annotation/instance shape mismatch: {anno.shape} vs {plant_instances.shape}")
+    if not q25 <= q75:
+        raise ValueError(f"Expected q25 <= q75, got {q25} > {q75}")
+    if min(small_weight, medium_weight, large_weight) <= 0:
+        raise ValueError("All WWSCE size weights must be positive.")
+
+    size_weight_map = torch.ones_like(anno, dtype=torch.float32)
+    weed_pixels = anno == 2
+    weed_instance_ids = torch.unique(plant_instances[weed_pixels])
+
+    for instance_id in weed_instance_ids:
+        if instance_id <= 0:
+            continue
+        instance_mask = weed_pixels & (plant_instances == instance_id)
+        visible_area = int(instance_mask.sum().item())
+        if visible_area <= q25:
+            size_weight = small_weight
+        elif visible_area <= q75:
+            size_weight = medium_weight
+        else:
+            size_weight = large_weight
+        size_weight_map[instance_mask] = size_weight
+
+    return size_weight_map
 
 
 class PDC(Dataset):
@@ -36,7 +80,9 @@ class PDC(Dataset):
                  mode: str,
                  img_normalizer: ImageNormalizer,
                  augmentations_geometric: List[GeometricDataAugmentation],
-                 augmentations_color: List[Callable]):
+                 augmentations_color: List[Callable],
+                 use_size_weight_map: bool = False,
+                 wwsce_config: Optional[Dict] = None):
         assert os.path.exists(path_to_dataset), f"The path to the dataset does not exist: {path_to_dataset}."
         super(PDC, self).__init__()
 
@@ -46,10 +92,13 @@ class PDC(Dataset):
         self.img_normalizer = img_normalizer
         self.augmentations_geometric = augmentations_geometric
         self.augmentations_color = augmentations_color
+        self.use_size_weight_map = use_size_weight_map
+        self.wwsce_config = wwsce_config or {}
 
         # -------------------------Prepare Training--------------------------------------------
         self.path_to_train_images = os.path.join(path_to_dataset, "train", "images")
         self.path_to_train_annos = os.path.join(path_to_dataset, "train", "semantics")
+        self.path_to_train_instances = os.path.join(path_to_dataset, "train", "plant_instances")
         self.filenames_train = get_img_fnames_in_dir(
             self.path_to_train_images)  # 仅得到图像文件名[['05-15_00028_P0030852.png', '05-15_00029_P0030852.png', '05-15_00030_P0030852.png']
 
@@ -66,6 +115,15 @@ class PDC(Dataset):
         # specify image transformations
         self.img_to_tensor = transforms.ToTensor()
 
+        if self.use_size_weight_map:
+            required = ('q25', 'q75', 'small_weight', 'medium_weight', 'large_weight')
+            missing = [key for key in required if key not in self.wwsce_config]
+            if missing:
+                raise ValueError(f"Missing WWSCE configuration keys: {missing}")
+            if not os.path.isdir(self.path_to_train_instances):
+                raise FileNotFoundError(
+                    f"WWSCE requires train/plant_instances, but it was not found: {self.path_to_train_instances}")
+
     def get_train_item(self, idx: int) -> Dict:
         path_to_current_img = os.path.join(self.path_to_train_images, self.filenames_train[idx])
         img_pil = Image.open(path_to_current_img)
@@ -79,13 +137,26 @@ class PDC(Dataset):
         anno = np.array(Image.open(path_to_current_anno))  # dtype: int32
         if len(anno.shape) > 2:
             anno = anno[:, :, 0]
-        anno = anno.astype(np.int64)  # [H x W]
-        anno = torch.Tensor(anno).type(torch.int64)
-        anno = anno.unsqueeze(0)  # [1 x H x W]
+        anno = torch.from_numpy(anno.astype(np.int64))
 
-        for augmentor_geometric in self.augmentations_geometric:
-            img, anno = augmentor_geometric(img, anno)
-        anno = anno.squeeze(0)  # [H x W]
+        if self.use_size_weight_map:
+            path_to_current_instance = os.path.join(self.path_to_train_instances, self.filenames_train[idx])
+            plant_instances = np.array(Image.open(path_to_current_instance)).astype(np.int64)
+            if plant_instances.ndim > 2:
+                plant_instances = plant_instances[:, :, 0]
+
+            # A two-channel annotation tensor makes every stochastic geometric
+            # transform use exactly the same sampled parameters for both masks.
+            annotations = torch.stack((anno, torch.from_numpy(plant_instances)), dim=0).float()
+            for augmentor_geometric in self.augmentations_geometric:
+                img, annotations = augmentor_geometric(img, annotations)
+            anno = annotations[0].round().to(torch.int64)
+            plant_instances = annotations[1].round().to(torch.int64)
+        else:
+            anno = anno.unsqueeze(0)
+            for augmentor_geometric in self.augmentations_geometric:
+                img, anno = augmentor_geometric(img, anno)
+            anno = anno.squeeze(0).to(torch.int64)
 
         mask_3 = anno == 3
         anno[mask_3] = 1
@@ -96,10 +167,20 @@ class PDC(Dataset):
         img_before_norm = img.clone()
         img = self.img_normalizer.normalize(img)
 
-        return {'input_image_before_norm': img_before_norm,
+        sample = {'input_image_before_norm': img_before_norm,
                 'input_image': img,
                 'anno': anno,
                 'fname': self.filenames_train[idx]}
+        if self.use_size_weight_map:
+            sample['size_weight_map'] = build_size_weight_map(
+                anno=anno,
+                plant_instances=plant_instances,
+                q25=float(self.wwsce_config['q25']),
+                q75=float(self.wwsce_config['q75']),
+                small_weight=float(self.wwsce_config['small_weight']),
+                medium_weight=float(self.wwsce_config['medium_weight']),
+                large_weight=float(self.wwsce_config['large_weight']))
+        return sample
 
     def get_val_item(self, idx: int) -> Dict:
         path_to_current_img = os.path.join(self.path_to_val_images, self.filenames_val[idx])
@@ -193,6 +274,8 @@ class PDCModule(pl.LightningDataModule):
         """
         path_to_dataset = self.cfg['data']['path_to_dataset']
         image_normalizer = get_image_normalizer(self.cfg)
+        use_size_weight_map = self.cfg['train'].get('loss') == 'weed_size_aware_ce'
+        wwsce_config = self.cfg.get('loss', {}).get('weed_size', {})
 
         if stage == 'fit' or stage == 'validate' or stage is None:
             # -----------------------TRAIN---------------------------
@@ -203,7 +286,9 @@ class PDCModule(pl.LightningDataModule):
                 mode='train',
                 img_normalizer=image_normalizer,
                 augmentations_geometric=train_augmentations_geometric,
-                augmentations_color=train_augmentations_color)
+                augmentations_color=train_augmentations_color,
+                use_size_weight_map=use_size_weight_map,
+                wwsce_config=wwsce_config)
 
             # -----------------------VAL-------------------------------
             val_augmentations_geometric = get_geometric_augmentations(self.cfg, 'val')

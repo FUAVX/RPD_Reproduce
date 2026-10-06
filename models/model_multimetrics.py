@@ -148,7 +148,8 @@ class SegmentationNetwork(pl.LightningModule):
                 self.logger.log_metrics(metrics, step=step)
 
     def compute_loss(self, logits: torch.Tensor, y: torch.Tensor, mode: str,
-                     mask_keep: Optional[torch.Tensor] = None) -> torch.Tensor:
+                     mask_keep: Optional[torch.Tensor] = None,
+                     size_weight_map: Optional[torch.Tensor] = None) -> torch.Tensor:
         """ Compute cross entropy loss based on logits and ground-truths.
 
         Args:
@@ -161,7 +162,7 @@ class SegmentationNetwork(pl.LightningModule):
         Returns:
             torch.Tensor: loss
         """
-        return self.criterion(logits, y, mode=mode, mask_keep=mask_keep)
+        return self.criterion(logits, y, mode=mode, mask_keep=mask_keep, size_weight_map=size_weight_map)
 
     def forward(self, img_batch: torch.Tensor) -> torch.Tensor:
         """ Forward pass of backbone network.
@@ -186,7 +187,8 @@ class SegmentationNetwork(pl.LightningModule):
 
             mask_keep_regular = batch['anno'] != 255
             loss_regular = self.compute_loss(logits_regular, batch['anno'], mode='train',
-                                             mask_keep=mask_keep_regular)
+                                             mask_keep=mask_keep_regular,
+                                             size_weight_map=batch.get('size_weight_map'))
 
             processed_steps.append('regular')
             # update training metrics

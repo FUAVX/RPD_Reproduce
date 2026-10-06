@@ -4,6 +4,7 @@ from typing import List, Optional
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 # ----------------------------------------------CROSS ENTROPY-------------------------------------
@@ -17,7 +18,8 @@ class CrossEntropy(nn.Module):
             self.weights = None
 
     def forward(self, inputs: torch.Tensor, target: torch.Tensor, mode: str,
-                mask_keep: Optional[torch.Tensor] = None) -> torch.Tensor:
+                mask_keep: Optional[torch.Tensor] = None,
+                size_weight_map: Optional[torch.Tensor] = None) -> torch.Tensor:
         """ Compute cross entropy loss.
 
         Args:
@@ -86,6 +88,59 @@ class CrossEntropy(nn.Module):
             losses *= weight_gathered
 
         return torch.mean(losses)
+
+
+class WeedSizeAwareCrossEntropy(nn.Module):
+    """Class-weighted CE with an additional post-crop weed-instance multiplier."""
+
+    def __init__(self, weights: List[float], ignore_index: int = 255):
+        super().__init__()
+        if weights is None or len(weights) == 0:
+            raise ValueError("WWSCE requires one positive class weight per class.")
+        class_weights = torch.as_tensor(weights, dtype=torch.float32)
+        if torch.any(class_weights <= 0):
+            raise ValueError("WWSCE class weights must all be positive.")
+        self.register_buffer('class_weights', class_weights)
+        self.ignore_index = ignore_index
+
+    def forward(self, inputs: torch.Tensor, target: torch.Tensor, mode: str,
+                mask_keep: Optional[torch.Tensor] = None,
+                size_weight_map: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if mode not in ('train', 'val', 'test'):
+            raise ValueError(f"Unknown loss mode: {mode}")
+        if inputs.ndim != 4 or target.shape != inputs.shape[0:1] + inputs.shape[2:]:
+            raise ValueError(f"Expected logits [B,C,H,W] and target [B,H,W], got {inputs.shape} and {target.shape}")
+        if target.dtype != torch.long:
+            target = target.long()
+
+        valid = target != self.ignore_index
+        if mask_keep is not None:
+            if mask_keep.shape != target.shape:
+                raise ValueError(f"mask_keep shape {mask_keep.shape} does not match target {target.shape}")
+            valid = valid & mask_keep.bool()
+        if not torch.any(valid):
+            return inputs.sum() * 0.0
+
+        safe_target = target.clone()
+        safe_target[~valid] = 0
+        if torch.any(safe_target >= inputs.shape[1]) or torch.any(safe_target < 0):
+            raise ValueError("Target contains a non-ignore class ID outside the logits class range.")
+
+        pixel_ce = F.cross_entropy(inputs, safe_target, reduction='none')
+        class_weight = self.class_weights.to(device=inputs.device, dtype=inputs.dtype)[safe_target]
+        if size_weight_map is None:
+            size_weight_map = torch.ones_like(pixel_ce, dtype=inputs.dtype)
+        else:
+            if size_weight_map.shape != target.shape:
+                raise ValueError(
+                    f"size_weight_map shape {size_weight_map.shape} does not match target {target.shape}")
+            size_weight_map = size_weight_map.to(device=inputs.device, dtype=inputs.dtype)
+            if torch.any(size_weight_map[valid] <= 0):
+                raise ValueError("WWSCE size weights must be positive for valid pixels.")
+
+        effective_weight = class_weight * size_weight_map
+        valid_weight = effective_weight[valid]
+        return (pixel_ce[valid] * valid_weight).sum() / valid_weight.sum().clamp_min(torch.finfo(inputs.dtype).eps)
 
 
 # -------------------------------------Generalized-Jensen-Shannon Divergence -------------------------------------------
@@ -227,6 +282,12 @@ def get_criterion(cfg) -> nn.Module:
 
     if loss_name == 'xentropy':
         weights = cfg['train']['class_weights']
+        return CrossEntropy(weights)
 
-    return CrossEntropy(weights)
+    if loss_name == 'weed_size_aware_ce':
+        loss_cfg = cfg.get('loss', {})
+        ignore_index = int(loss_cfg.get('ignore_index', 255))
+        return WeedSizeAwareCrossEntropy(cfg['train']['class_weights'], ignore_index=ignore_index)
+
+    raise ValueError(f"Unsupported loss: {loss_name}")
 
