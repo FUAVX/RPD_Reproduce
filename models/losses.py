@@ -224,6 +224,81 @@ class WeightedFocalLoss(nn.Module):
         return weighted_loss[valid].sum() / valid.sum()
 
 
+class WeightedCrossEntropyDiceLoss(nn.Module):
+    """Baseline-compatible weighted CE plus unweighted macro Soft Dice loss."""
+
+    def __init__(self, weights: List[float], dice_weight: float = 1.0,
+                 epsilon: float = 1e-6, ignore_index: int = 255):
+        super().__init__()
+        if weights is None or len(weights) == 0:
+            raise ValueError("WDice requires one positive class weight per class.")
+        class_weights = torch.as_tensor(weights, dtype=torch.float32)
+        if torch.any(class_weights <= 0):
+            raise ValueError("WDice class weights must all be positive.")
+        if dice_weight < 0:
+            raise ValueError(f"Expected dice_weight >= 0, got {dice_weight}.")
+        if epsilon <= 0:
+            raise ValueError(f"Expected epsilon > 0, got {epsilon}.")
+        self.register_buffer('class_weights', class_weights)
+        self.dice_weight = float(dice_weight)
+        self.epsilon = float(epsilon)
+        self.ignore_index = ignore_index
+
+    def forward(self, inputs: torch.Tensor, target: torch.Tensor, mode: str,
+                mask_keep: Optional[torch.Tensor] = None,
+                size_weight_map: Optional[torch.Tensor] = None) -> torch.Tensor:
+        del size_weight_map  # WDice intentionally has no weed-size term.
+        if mode not in ('train', 'val', 'test'):
+            raise ValueError(f"Unknown loss mode: {mode}")
+        if inputs.ndim != 4 or target.shape != inputs.shape[0:1] + inputs.shape[2:]:
+            raise ValueError(f"Expected logits [B,C,H,W] and target [B,H,W], got {inputs.shape} and {target.shape}")
+        if target.dtype != torch.long:
+            target = target.long()
+
+        # Match B1 caller semantics: train passes target != 255, while
+        # validation applies no additional mask.
+        if mask_keep is None:
+            valid = torch.ones_like(target, dtype=torch.bool)
+        else:
+            if mask_keep.shape != target.shape:
+                raise ValueError(f"mask_keep shape {mask_keep.shape} does not match target {target.shape}")
+            valid = mask_keep.bool()
+        if not torch.any(valid):
+            return inputs.sum() * 0.0
+        if torch.any(valid & (target == self.ignore_index)):
+            raise ValueError(
+                f"Target contains ignore_index={self.ignore_index} on an unmasked pixel. "
+                "Pass mask_keep for ignored labels, matching the B1 training path.")
+
+        safe_target = target.clone()
+        safe_target[~valid] = 0
+        if torch.any(safe_target >= inputs.shape[1]) or torch.any(safe_target < 0):
+            raise ValueError(
+                "Target contains a class ID outside the logits range on an unmasked pixel. "
+                "Pass mask_keep for ignored labels, matching the B1 training path.")
+
+        probabilities = torch.softmax(inputs, dim=1)
+        p_t = probabilities.gather(1, safe_target.unsqueeze(1)).squeeze(1)
+        p_t = torch.clamp(p_t, min=1e-12, max=1.0)
+        pixel_ce = -torch.log(p_t)
+        class_weight = self.class_weights.to(device=inputs.device, dtype=inputs.dtype)[safe_target]
+        weighted_ce = (class_weight[valid] * pixel_ce[valid]).sum() / valid.sum()
+
+        # Macro Dice covers Soil, Crop, and Weed equally.  Mask invalid pixels
+        # out of both numerator and denominator without mutating the target.
+        target_one_hot = torch.nn.functional.one_hot(
+            safe_target, num_classes=inputs.shape[1]).permute(0, 3, 1, 2).to(inputs.dtype)
+        valid_mask = valid.unsqueeze(1).to(inputs.dtype)
+        probabilities = probabilities * valid_mask
+        target_one_hot = target_one_hot * valid_mask
+        reduce_dims = (0, 2, 3)
+        intersection = (probabilities * target_one_hot).sum(dim=reduce_dims)
+        denominator = probabilities.sum(dim=reduce_dims) + target_one_hot.sum(dim=reduce_dims)
+        dice_per_class = (2.0 * intersection + self.epsilon) / (denominator + self.epsilon)
+        dice_loss = 1.0 - dice_per_class.mean()
+        return weighted_ce + self.dice_weight * dice_loss
+
+
 # -------------------------------------Generalized-Jensen-Shannon Divergence -------------------------------------------
 def gjs_div_loss(p1_logits: torch.Tensor, p2_logits: torch.Tensor, p3_logits: torch.Tensor) -> torch.Tensor:
     p1_probs = nn.functional.softmax(p1_logits, dim=1)  # [BxCxHxW]
@@ -376,6 +451,16 @@ def get_criterion(cfg) -> nn.Module:
         gamma = float(focal_cfg.get('gamma', 2.0))
         ignore_index = int(loss_cfg.get('ignore_index', 255))
         return WeightedFocalLoss(cfg['train']['class_weights'], gamma=gamma, ignore_index=ignore_index)
+
+    if loss_name == 'weighted_dice':
+        loss_cfg = cfg.get('loss', {})
+        dice_cfg = loss_cfg.get('dice', {})
+        dice_weight = float(dice_cfg.get('lambda', 1.0))
+        epsilon = float(dice_cfg.get('epsilon', 1e-6))
+        ignore_index = int(loss_cfg.get('ignore_index', 255))
+        return WeightedCrossEntropyDiceLoss(
+            cfg['train']['class_weights'], dice_weight=dice_weight,
+            epsilon=epsilon, ignore_index=ignore_index)
 
     raise ValueError(f"Unsupported loss: {loss_name}")
 

@@ -1,0 +1,118 @@
+# ==============================================================================
+# P2 Ex7: RepDWNet + baseline-compatible Weighted CE + Macro Soft Dice
+# Base recipe: B1 Run 5. Only the loss function differs from the B1 control.
+# ==============================================================================
+
+seed: 1682409321
+
+experiment:
+  id: 'P2_Ex7_RepDWNet_WDice-Loss'
+  description: 'RepDWNet B1 Run 5 recipe with baseline-compatible weighted CE plus macro Soft Dice'
+
+data:
+  name: phenobench
+  path_to_dataset: ./data/PhenoBench
+  num_workers: 2
+  image_normalizer:
+    name: single_image_normalizer
+
+backbone:
+  name: RepDWNet
+  num_classes: 3
+  pretrained: false
+  num_dw_branches: 4
+  use_se: false
+  base_c: 16
+  deploy: false
+
+train:
+  step_settings:
+    - regular
+  max_epoch: 100
+  devices: 1
+  benchmark: True
+  loss: weighted_dice
+  learning_rate: 2.0e-4
+  scheduler: 'cosine'
+  warmup_epochs: 5
+  weight_decay: 2.0e-04
+  batch_size: 4
+  precision: 32
+  accumulate_grad_batches: 1
+  shuffle: true
+  early_stopping:
+    mode: 'none'
+  vis_train_every_x_epochs: 4096
+  postprocess_train_every_x_epochs: 4096
+  class_weights:
+    - 1.47
+    - 5.06
+    - 10.02
+  color_data_augmentations:
+    random_global_brightness:
+      min_brightness_factor: 0.6
+      max_brightness_factor: 1.4
+    random_global_contrast:
+      min_contrast_factor: 0.6
+      max_contrast_factor: 1.4
+    random_global_saturation:
+      min_saturation_factor: 0.8
+      max_saturation_factor: 1.2
+    random_global_hue:
+      min_hue_factor: -0.0125
+      max_hue_factor: 0.0125
+  geometric_data_augmentations:
+    random_hflip: null
+    random_vflip: null
+    random_scale:
+      min_scale: 1.0
+      max_scale: 1.1
+    random_crop:
+      height: 768
+      width: 768
+
+loss:
+  ignore_index: 255
+  dice:
+    lambda: 1.0
+    epsilon: 1.0e-6
+    reduction: macro
+    classes: [soil, crop, weed]
+
+val:
+  step_settings:
+    - regular
+  devices: 1
+  num_nodes: 1
+  batch_size: 4
+  check_val_every_n_epoch: 5
+  vis_val_every_x_epochs: 4096
+  postprocess_val_every_x_epochs: 4096
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+test:
+  step_settings:
+    - regular
+  devices: 1
+  batch_size: 1
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+visualizers:
+  input_image_visualizer: null
+  semantic_map_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_correct_incorrect_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  ground_truth_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+
+postprocessors:
+  arg_max_classes_postprocessor: null
