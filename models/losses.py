@@ -4,7 +4,6 @@ from typing import List, Optional
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 
 # ----------------------------------------------CROSS ENTROPY-------------------------------------
@@ -91,7 +90,12 @@ class CrossEntropy(nn.Module):
 
 
 class WeedSizeAwareCrossEntropy(nn.Module):
-    """Class-weighted CE with an additional post-crop weed-instance multiplier."""
+    """Baseline-compatible weighted CE with a post-crop weed-size multiplier.
+
+    The original RPD weighted CE averages weighted per-pixel losses over the
+    number of valid pixels.  WWSCE preserves that normalization and changes
+    only the numerator by applying the size multiplier to weed-instance pixels.
+    """
 
     def __init__(self, weights: List[float], ignore_index: int = 255):
         super().__init__()
@@ -113,20 +117,35 @@ class WeedSizeAwareCrossEntropy(nn.Module):
         if target.dtype != torch.long:
             target = target.long()
 
-        valid = target != self.ignore_index
-        if mask_keep is not None:
+        # Keep the caller-defined mask semantics of the B1 control: training
+        # supplies target != 255, while validation supplies no additional mask.
+        # Do not mutate ``target`` while preparing the safe gather indices.
+        if mask_keep is None:
+            valid = torch.ones_like(target, dtype=torch.bool)
+        else:
             if mask_keep.shape != target.shape:
                 raise ValueError(f"mask_keep shape {mask_keep.shape} does not match target {target.shape}")
-            valid = valid & mask_keep.bool()
+            valid = mask_keep.bool()
         if not torch.any(valid):
             return inputs.sum() * 0.0
+
+        if torch.any(valid & (target == self.ignore_index)):
+            raise ValueError(
+                f"Target contains ignore_index={self.ignore_index} on an unmasked pixel. "
+                "Pass mask_keep for ignored labels, matching the B1 training path.")
 
         safe_target = target.clone()
         safe_target[~valid] = 0
         if torch.any(safe_target >= inputs.shape[1]) or torch.any(safe_target < 0):
-            raise ValueError("Target contains a non-ignore class ID outside the logits class range.")
+            raise ValueError(
+                "Target contains a class ID outside the logits range on an unmasked pixel. "
+                "Pass mask_keep for ignored labels, matching the B1 training path.")
 
-        pixel_ce = F.cross_entropy(inputs, safe_target, reduction='none')
+        # Match the released baseline implementation: softmax, gather the
+        # ground-truth probability, clamp it, then take -log.
+        probabilities = torch.softmax(inputs, dim=1)
+        p_t = probabilities.gather(1, safe_target.unsqueeze(1)).squeeze(1)
+        pixel_ce = -torch.log(torch.clamp(p_t, min=1e-12, max=1.0))
         class_weight = self.class_weights.to(device=inputs.device, dtype=inputs.dtype)[safe_target]
         if size_weight_map is None:
             size_weight_map = torch.ones_like(pixel_ce, dtype=inputs.dtype)
@@ -139,8 +158,7 @@ class WeedSizeAwareCrossEntropy(nn.Module):
                 raise ValueError("WWSCE size weights must be positive for valid pixels.")
 
         effective_weight = class_weight * size_weight_map
-        valid_weight = effective_weight[valid]
-        return (pixel_ce[valid] * valid_weight).sum() / valid_weight.sum().clamp_min(torch.finfo(inputs.dtype).eps)
+        return (pixel_ce[valid] * effective_weight[valid]).sum() / valid.sum()
 
 
 # -------------------------------------Generalized-Jensen-Shannon Divergence -------------------------------------------
