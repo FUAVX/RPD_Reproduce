@@ -23,6 +23,7 @@ import zipfile
 import argparse
 import yaml
 import numpy as np
+from typing import Optional, List, Dict, Tuple, Any
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont
