@@ -37,6 +37,8 @@ if BASE_DIR not in sys.path:
 
 from models import get_backbone
 from models.rpdnet.RPD_Module import RPD_model_deploy
+from datasets.augmentations_normalize import SingleImageNormalizer
+from torchvision import transforms
 
 COLOR_MAP = {
     0: (35, 35, 35),       # Background/Soil: Xám đậm
@@ -228,6 +230,9 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
     print(f"\n[Dataset] Quét {len(all_images)} ảnh trong tập Validation...")
     records = []
 
+    img_normalizer = SingleImageNormalizer()
+    to_tensor = transforms.ToTensor()
+
     for idx, img_path in enumerate(all_images[:max_eval_samples]):
         fname = os.path.basename(img_path)
         sem_path = os.path.join(semantics_dir, fname)
@@ -240,11 +245,9 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
         gt_pil = Image.open(sem_path)
         gt_np = np.array(gt_pil, dtype=np.uint8)
 
-        # Chuyển đổi tensor chuẩn SingleImageNormalizer (Zero mean, unit std per channel)
-        t = torch.from_numpy(np.array(rgb_pil).transpose(2, 0, 1)).float().unsqueeze(0).to(device) / 255.0
-        t_mean = t.mean(dim=[-2, -1], keepdim=True)
-        t_std = t.std(dim=[-2, -1], keepdim=True)
-        t = (t - t_mean) / (t_std + 1e-7)
+        # Chuyển đổi tensor chuẩn SingleImageNormalizer gốc của codebase
+        img_tensor = to_tensor(rgb_pil)  # [3, H, W] trong [0, 1]
+        t = img_normalizer.normalize(img_tensor).unsqueeze(0).to(device)
 
         preds = {}
         with torch.no_grad():
@@ -266,6 +269,20 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
 
         weed_pixels = int((gt_np == 2).sum())
         crop_pixels = int((gt_np == 1).sum())
+        total_pixels = gt_np.size
+
+        # Phát hiện trường hợp mô hình bị sụp đổ dự đoán (bão hòa toàn ảnh / collapse):
+        # Ví dụ: một class duy nhất chiếm >85% diện tích dự đoán trong khi GT của class đó <50%,
+        # hoặc nền đất (class 0) hoàn toàn biến mất (<1%) trong khi đất trong GT >50%.
+        is_collapsed = False
+        for mname in models.keys():
+            p_counts = np.bincount(preds[mname].ravel(), minlength=3)
+            # Bị bão hòa toàn bộ thành Crop hoặc toàn bộ thành Weed
+            if (p_counts[1] > 0.85 * total_pixels and crop_pixels < 0.50 * total_pixels) or \
+               (p_counts[2] > 0.85 * total_pixels and weed_pixels < 0.50 * total_pixels) or \
+               (p_counts[0] < 0.01 * total_pixels and (gt_np == 0).sum() > 0.50 * total_pixels):
+                is_collapsed = True
+                break
 
         delta_b1_b0 = m_stats["B1"]["iou"] - m_stats["B0"]["iou"]
         fp_b0_suppressed = np.logical_and(gt_np != 2, np.logical_and(preds["B0"] == 2, preds["B1"] != 2)).sum()
@@ -281,6 +298,7 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             "small_weeds": small_weeds,
             "weed_pixels": weed_pixels,
             "crop_pixels": crop_pixels,
+            "is_collapsed": is_collapsed,
             "delta_b1_b0": delta_b1_b0,
             "fp_b0_suppressed": int(fp_b0_suppressed)
         })
@@ -289,34 +307,38 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             print(f"  -> Đã suy luận đối soát: {idx + 1}/{min(len(all_images), max_eval_samples)} ảnh...")
 
     # Phân loại các trường hợp thú vị nhất
-    # Yêu cầu tối thiểu 200 pixel cỏ dại trong GT để ảnh có ý nghĩa trực quan
+    # Yêu cầu tối thiểu 200 pixel cỏ dại trong GT và mô hình hoạt động hợp lệ (không bị sụp đổ bão hòa)
     MIN_WEED_PIXELS = 200
 
     categories = {
         "1_sunny_shadow_rejection": {
             "title": "Khử Nhiễu Bóng Râm Dưới Nắng Gắt (Sunny II Shadow Invariance)",
             "filter": lambda r: (
+                not r["is_collapsed"] and
                 r["lighting"] == "Sunny II" and
                 r["weed_pixels"] >= MIN_WEED_PIXELS and
-                r["fp_b0_suppressed"] > 0
+                r["fp_b0_suppressed"] > 0 and
+                r["stats"]["B1"]["iou"] > 10.0
             ),
             "sort_key": lambda r: r["fp_b0_suppressed"],
         },
         "2_micro_weed_detection": {
             "title": "Nhận Diện Khóm Cỏ Vi Mô (<100px: B1 vs P2_ex1 vs P2_ex2)",
             "filter": lambda r: (
+                not r["is_collapsed"] and
                 r["small_weeds"] >= 3 and
                 r["weed_pixels"] >= MIN_WEED_PIXELS and
-                r["stats"]["B1"]["iou"] > 0
+                r["stats"]["B1"]["iou"] > 10.0
             ),
             "sort_key": lambda r: (r["stats"]["B1"]["iou"] - r["stats"]["P2_ex1"]["iou"]),
         },
         "3_max_precision_crop_safety": {
             "title": "Độ Chính Xác Kỷ Lục & An Toàn Phun Thuốc (P2_ex2 Max Precision)",
             "filter": lambda r: (
+                not r["is_collapsed"] and
                 r["stats"]["P2_ex2"]["prec"] > r["stats"]["B1"]["prec"] and
                 r["weed_pixels"] >= MIN_WEED_PIXELS and
-                r["stats"]["P2_ex2"]["iou"] > 0
+                r["stats"]["P2_ex2"]["iou"] > 10.0
             ),
             "sort_key": lambda r: r["stats"]["P2_ex2"]["prec"],
         }
