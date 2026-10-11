@@ -24,6 +24,7 @@ import argparse
 import time
 import json
 import yaml
+import zipfile
 import numpy as np
 import torch
 import torch.nn as nn
@@ -65,7 +66,17 @@ def build_model_pair(config_path, weights_path=None, device='cpu'):
     1. model_train: Giữ nguyên cấu trúc đa nhánh (Multi-branch Pre-deploy)
     2. model_deploy: Đã Reparameterize thành đơn nhánh 3x3 (Fused Post-deploy)
     """
-    with open(config_path, 'r') as f:
+    resolved_cfg = config_path
+    if not os.path.exists(resolved_cfg):
+        candidate = os.path.join(RPD_DIR, config_path)
+        if os.path.exists(candidate):
+            resolved_cfg = candidate
+        else:
+            candidate = os.path.join(BASE_DIR, config_path)
+            if os.path.exists(candidate):
+                resolved_cfg = candidate
+
+    with open(resolved_cfg, 'r') as f:
         cfg = yaml.safe_load(f)
 
     # 1. Khởi tạo mô hình ở dạng multi-branch
@@ -73,9 +84,23 @@ def build_model_pair(config_path, weights_path=None, device='cpu'):
     model_train = get_backbone(cfg)
 
     if weights_path is not None and os.path.exists(weights_path):
-        print(f"  [Load Weights] Đang nạp weights từ: {weights_path}")
-        ckpt = torch.load(weights_path, map_location='cpu')
-        model_train.load_state_dict(clean_state_dict(ckpt), strict=False)
+        actual_weights = weights_path
+        if weights_path.endswith('.zip'):
+            extract_dir = os.path.join(os.path.dirname(weights_path), 'extracted_ckpts')
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(weights_path, 'r') as zf:
+                matching = [f for f in zf.namelist() if 'best' in f and f.endswith('.ckpt')] or [f for f in zf.namelist() if f.endswith('.ckpt')]
+                if matching:
+                    chosen = matching[0]
+                    target_p = os.path.join(extract_dir, os.path.basename(chosen))
+                    if not os.path.exists(target_p):
+                        with open(target_p, 'wb') as f_out:
+                            f_out.write(zf.read(chosen))
+                    actual_weights = target_p
+        if actual_weights and os.path.exists(actual_weights):
+            print(f"  [Load Weights] Đang nạp weights từ: {actual_weights}")
+            ckpt = torch.load(actual_weights, map_location='cpu')
+            model_train.load_state_dict(clean_state_dict(ckpt), strict=False)
 
     model_train.eval().to(device)
 
@@ -268,9 +293,12 @@ def main():
     parser = argparse.ArgumentParser(description="Reparameterization Benchmark B0 vs B1")
     parser.add_argument('--b0_config', type=str, default='configs/b0_scenarios/B0_run5_cosine_lr2e4.yaml')
     parser.add_argument('--b1_config', type=str, default='configs/b1_scenarios/B1_run5_repdwnet.yaml')
-    parser.add_argument('--b0_weights', type=str, default=None)
-    parser.add_argument('--b1_weights', type=str, default=None)
-    parser.add_argument('--batch_sizes', type=str, default='1,4,8', help="Comma-separated batch sizes")
+    parser.add_argument('--b0_weights', type=str, default='results/B0/B0_run5_cosine_lr2e4_results.zip')
+    parser.add_argument('--b1_weights', type=str, default='results/B1/B1_run5_repdwnet_results.zip')
+    parser.add_argument('--batch_sizes', nargs='*', default=['1', '4', '8'], help="Batch sizes (comma or space separated)")
+    parser.add_argument('--resolutions', nargs='*', default=['768'], help="Image resolutions (e.g. 768)")
+    parser.add_argument('--runs', type=int, default=None, help="Alias for iters")
+    parser.add_argument('--mode', type=str, default='all', help="Benchmark mode")
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--warmup', type=int, default=30)
     parser.add_argument('--iters', type=int, default=100)
@@ -278,7 +306,19 @@ def main():
     parser.add_argument('--output_json', type=str, default=None)
     args = parser.parse_args()
 
-    batch_sizes = [int(x.strip()) for x in args.batch_sizes.split(',')]
+    # Parse batch_sizes from string or list
+    raw_bs = args.batch_sizes
+    if isinstance(raw_bs, list):
+        if len(raw_bs) == 1 and ',' in str(raw_bs[0]):
+            batch_sizes = [int(x.strip()) for x in str(raw_bs[0]).split(',') if x.strip()]
+        else:
+            batch_sizes = [int(x) for x in raw_bs if str(x).isdigit()]
+    elif isinstance(raw_bs, str):
+        batch_sizes = [int(x.strip()) for x in raw_bs.split(',') if x.strip()]
+    else:
+        batch_sizes = [1, 4, 8]
+
+    iters = args.runs if args.runs is not None else args.iters
 
     results, device_name = run_benchmark(
         b0_cfg_path=args.b0_config,
@@ -288,7 +328,7 @@ def main():
         batch_sizes=batch_sizes,
         device=args.device,
         warmup=args.warmup,
-        iters=args.iters
+        iters=iters
     )
 
     md_table = format_markdown_table(results, device_name)

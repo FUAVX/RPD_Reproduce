@@ -46,23 +46,35 @@ COLOR_MAP = {
 
 def auto_extract_checkpoint(ckpt_or_zip_path: str, target_pattern: str = "best_weedIoU") -> str:
     """Tự động giải nén checkpoint phù hợp nhất từ file .zip."""
-    if not os.path.exists(ckpt_or_zip_path):
+    resolved_path = ckpt_or_zip_path
+    if not os.path.exists(resolved_path):
+        candidates = [
+            os.path.join(BASE_DIR, ckpt_or_zip_path),
+            os.path.join("..", ckpt_or_zip_path),
+            os.path.join(RPD_DIR, ckpt_or_zip_path)
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                resolved_path = c
+                break
+
+    if not os.path.exists(resolved_path):
         raise FileNotFoundError(f"Không tìm thấy file: {ckpt_or_zip_path}")
 
-    if ckpt_or_zip_path.endswith('.ckpt') or ckpt_or_zip_path.endswith('.pth'):
-        return ckpt_or_zip_path
+    if resolved_path.endswith('.ckpt') or resolved_path.endswith('.pth'):
+        return resolved_path
 
-    if ckpt_or_zip_path.endswith('.zip'):
-        extract_dir = os.path.join(os.path.dirname(ckpt_or_zip_path), 'extracted_ckpts')
+    if resolved_path.endswith('.zip'):
+        extract_dir = os.path.join(os.path.dirname(resolved_path), 'extracted_ckpts')
         os.makedirs(extract_dir, exist_ok=True)
-        with zipfile.ZipFile(ckpt_or_zip_path, 'r') as zf:
+        with zipfile.ZipFile(resolved_path, 'r') as zf:
             matching = [f for f in zf.namelist() if target_pattern in f and f.endswith('.ckpt')]
             if not matching:
                 matching = [f for f in zf.namelist() if 'best' in f and f.endswith('.ckpt')]
             if not matching:
                 matching = [f for f in zf.namelist() if f.endswith('.ckpt')]
             if not matching:
-                raise ValueError(f"Không tìm thấy file .ckpt nào trong {ckpt_or_zip_path}")
+                raise ValueError(f"Không tìm thấy file .ckpt nào trong {resolved_path}")
 
             chosen = matching[0]
             target_path = os.path.join(extract_dir, os.path.basename(chosen))
@@ -72,12 +84,25 @@ def auto_extract_checkpoint(ckpt_or_zip_path: str, target_pattern: str = "best_w
                     f_out.write(zf.read(chosen))
             return target_path
 
-    raise ValueError(f"Định dạng không hỗ trợ: {ckpt_or_zip_path}")
+    raise ValueError(f"Định dạng không hỗ trợ: {resolved_path}")
 
 
 def load_model(config_path: str, ckpt_path: str, deploy: bool = False, device: str = 'cuda'):
     """Nạp checkpoint và chuyển sang deploy mode nếu được yêu cầu."""
-    with open(config_path, 'r') as f:
+    resolved_cfg = config_path
+    if not os.path.exists(resolved_cfg):
+        candidates = [
+            os.path.join(RPD_DIR, config_path),
+            os.path.join(BASE_DIR, config_path),
+            config_path.replace('RPD/', ''),
+            os.path.join('RPD', config_path)
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                resolved_cfg = c
+                break
+
+    with open(resolved_cfg, 'r') as f:
         cfg = yaml.safe_load(f)
 
     cfg['backbone']['deploy'] = False
