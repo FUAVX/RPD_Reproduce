@@ -264,6 +264,9 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
         except ImportError:
             pass
 
+        weed_pixels = int((gt_np == 2).sum())
+        crop_pixels = int((gt_np == 1).sum())
+
         delta_b1_b0 = m_stats["B1"]["iou"] - m_stats["B0"]["iou"]
         fp_b0_suppressed = np.logical_and(gt_np != 2, np.logical_and(preds["B0"] == 2, preds["B1"] != 2)).sum()
 
@@ -276,6 +279,8 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             "gt_np": gt_np,
             "rgb_pil": rgb_pil,
             "small_weeds": small_weeds,
+            "weed_pixels": weed_pixels,
+            "crop_pixels": crop_pixels,
             "delta_b1_b0": delta_b1_b0,
             "fp_b0_suppressed": int(fp_b0_suppressed)
         })
@@ -284,20 +289,35 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             print(f"  -> Đã suy luận đối soát: {idx + 1}/{min(len(all_images), max_eval_samples)} ảnh...")
 
     # Phân loại các trường hợp thú vị nhất
+    # Yêu cầu tối thiểu 200 pixel cỏ dại trong GT để ảnh có ý nghĩa trực quan
+    MIN_WEED_PIXELS = 200
+
     categories = {
         "1_sunny_shadow_rejection": {
             "title": "Khử Nhiễu Bóng Râm Dưới Nắng Gắt (Sunny II Shadow Invariance)",
-            "filter": lambda r: r["lighting"] == "Sunny II",
+            "filter": lambda r: (
+                r["lighting"] == "Sunny II" and
+                r["weed_pixels"] >= MIN_WEED_PIXELS and
+                r["fp_b0_suppressed"] > 0
+            ),
             "sort_key": lambda r: r["fp_b0_suppressed"],
         },
         "2_micro_weed_detection": {
             "title": "Nhận Diện Khóm Cỏ Vi Mô (<100px: B1 vs P2_ex1 vs P2_ex2)",
-            "filter": lambda r: r["small_weeds"] >= 3,
+            "filter": lambda r: (
+                r["small_weeds"] >= 3 and
+                r["weed_pixels"] >= MIN_WEED_PIXELS and
+                r["stats"]["B1"]["iou"] > 0
+            ),
             "sort_key": lambda r: (r["stats"]["B1"]["iou"] - r["stats"]["P2_ex1"]["iou"]),
         },
         "3_max_precision_crop_safety": {
             "title": "Độ Chính Xác Kỷ Lục & An Toàn Phun Thuốc (P2_ex2 Max Precision)",
-            "filter": lambda r: r["stats"]["P2_ex2"]["prec"] > r["stats"]["B1"]["prec"],
+            "filter": lambda r: (
+                r["stats"]["P2_ex2"]["prec"] > r["stats"]["B1"]["prec"] and
+                r["weed_pixels"] >= MIN_WEED_PIXELS and
+                r["stats"]["P2_ex2"]["iou"] > 0
+            ),
             "sort_key": lambda r: r["stats"]["P2_ex2"]["prec"],
         }
     }
@@ -318,7 +338,8 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             st = r["stats"]
 
             p1 = add_header(r["rgb_pil"], f"RGB: {fname}", f"Lighting: {r['lighting']}")
-            p2 = add_header(colorize_mask(r["gt_np"]), "Ground Truth", f"Small Weeds: {r['small_weeds']}")
+            p2 = add_header(colorize_mask(r["gt_np"]), "Ground Truth",
+                            f"Small Weeds: {r['small_weeds']} | GT Weed px: {r['weed_pixels']}")
             p3 = add_header(colorize_mask(r["preds"]["B0"]), "B0 (PDC Baseline)",
                             f"Weed IoU: {st['B0']['iou']:.1f}% | Prec: {st['B0']['prec']:.1f}%")
             p4 = add_header(colorize_mask(r["preds"]["B1"]), "B1 (RepDWNet Base)",
