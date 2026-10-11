@@ -159,14 +159,40 @@ def main():
         "P2_ex2 (dw4_pw2)": args.p2_ex2_path,
     }
 
+    def find_file_fallback(tag: str, default_p: str) -> Optional[str]:
+        if default_p and os.path.exists(default_p):
+            return default_p
+        search_roots = ["results", "../results", "/kaggle/input", "/kaggle/working", "."]
+        for root in search_roots:
+            if not os.path.exists(root):
+                continue
+            # Tìm zip
+            for r, _, files in os.walk(root):
+                for f in files:
+                    if tag.lower() in f.lower() and f.endswith(".zip"):
+                        return os.path.join(r, f)
+            # Tìm val_history.csv trong thư mục có tên tag
+            for r, _, files in os.walk(root):
+                if tag.lower() in r.lower() and "val_history.csv" in files:
+                    return os.path.join(r, "val_history.csv")
+        return None
+
     models_data = {}
-    for name, p in paths.items():
-        if os.path.exists(p):
-            print(f"[Loading] {name} từ {p}...")
-            records = load_val_history_from_path_or_zip(p)
+    tags = {
+        "B0 (RPDNet)": ("B0_run5", args.b0_path),
+        "B1 (RepDWNet)": ("B1_run5", args.b1_path),
+        "P2_ex1 (dw2_pw4)": ("dw2_pw4", args.p2_ex1_path),
+        "P2_ex2 (dw4_pw2)": ("dw4_pw2", args.p2_ex2_path),
+    }
+
+    for name, (tag, p) in tags.items():
+        resolved_p = find_file_fallback(tag, p)
+        if resolved_p and os.path.exists(resolved_p):
+            print(f"[Loading] {name} từ {resolved_p}...")
+            records = load_val_history_from_path_or_zip(resolved_p)
             models_data[name] = extract_best_metrics(records)
         else:
-            print(f"[Warning] Không tìm thấy đường dẫn cho {name}: {p}")
+            print(f"[Warning] Không tìm thấy kết quả cho {name} (tag: {tag})")
 
     if not models_data:
         print("[Error] Không có mô hình nào được nạp thành công.")
