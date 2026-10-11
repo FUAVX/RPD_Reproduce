@@ -106,6 +106,7 @@ def load_model(config_path: str, ckpt_path: str, deploy: bool = False, device: s
     with open(resolved_cfg, 'r') as f:
         cfg = yaml.safe_load(f)
 
+    is_repdwnet = (cfg.get('backbone', {}).get('name') == 'RepDWNet')
     cfg['backbone']['deploy'] = False
     model = get_backbone(cfg)
 
@@ -113,13 +114,23 @@ def load_model(config_path: str, ckpt_path: str, deploy: bool = False, device: s
     state_dict = ckpt.get('state_dict', ckpt)
     clean_dict = {}
     for k, v in state_dict.items():
-        k_clean = k.replace('model.model.', '').replace('model.', '')
+        k_clean = k
+        # Strip all known PyTorch Lightning / wrapper prefixes
+        for prefix in ['model.model.', 'network.model.', 'model.', 'network.']:
+            if k_clean.startswith(prefix):
+                k_clean = k_clean[len(prefix):]
         clean_dict[k_clean] = v
 
-    model.load_state_dict(clean_dict, strict=False)
+    load_res = model.load_state_dict(clean_dict, strict=False)
+    missing = len(load_res.missing_keys)
+    unexpected = len(load_res.unexpected_keys)
+    print(f"[{os.path.basename(ckpt_path)}] Loaded weights: {len(clean_dict)} tensors | Missing: {missing} | Unexpected: {unexpected}")
 
-    if deploy:
+    # Chỉ chuyển đổi switch_to_deploy cho RepDWNet (1-step deploy).
+    # Đối với RPDNet (B0 PDC vi sai), không gọi trực tiếp deploy nếu chưa qua convert_pdc.
+    if deploy and is_repdwnet:
         model = RPD_model_deploy(model, do_copy=True)
+        print(f"[{os.path.basename(ckpt_path)}] Successfully fused into single-branch deploy model.")
 
     model.to(device)
     model.eval()
@@ -217,9 +228,6 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
     print(f"\n[Dataset] Quét {len(all_images)} ảnh trong tập Validation...")
     records = []
 
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device)
-
     for idx, img_path in enumerate(all_images[:max_eval_samples]):
         fname = os.path.basename(img_path)
         sem_path = os.path.join(semantics_dir, fname)
@@ -232,9 +240,11 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
         gt_pil = Image.open(sem_path)
         gt_np = np.array(gt_pil, dtype=np.uint8)
 
-        # Chuyển đổi tensor
+        # Chuyển đổi tensor chuẩn SingleImageNormalizer (Zero mean, unit std per channel)
         t = torch.from_numpy(np.array(rgb_pil).transpose(2, 0, 1)).float().unsqueeze(0).to(device) / 255.0
-        t = (t - mean) / std
+        t_mean = t.mean(dim=[-2, -1], keepdim=True)
+        t_std = t.std(dim=[-2, -1], keepdim=True)
+        t = (t - t_mean) / (t_std + 1e-7)
 
         preds = {}
         with torch.no_grad():
