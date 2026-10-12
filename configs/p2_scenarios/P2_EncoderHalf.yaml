@@ -1,0 +1,202 @@
+# ==============================================================================
+# P2_EncoderHalf: fresh Encoder-Decoder ablation against B1 Run 5 RepDWNet
+# Architecture: HANDOFF_EnDe_Fresh_Training.md section 3
+# Recipe: section 4.2; preflight/artifacts: sections 5 and 6
+# Cosine + 5 warmup epochs, Adam, LR/WD 2e-4, FP32, epochs 0-99
+# 2 GPU DDP, batch 4/GPU, accumulation 1, effective batch 8
+# New channel/fresh/tracking fields are a contract for subsequent runner updates.
+# YAML alone does not implement the model, resume guards, or artifact handling.
+# ==============================================================================
+
+seed: 1682409321
+
+experiment:
+  id: 'P2_EncoderHalf'
+  description: 'P2_EncoderHalf: fresh B1 Run 5 encoder-decoder ablation, 2 GPU DDP, effective batch 8, FP32, 100 epochs'
+
+data:
+  name: phenobench
+  path_to_dataset: ./data/PhenoBench
+  num_workers: 2
+  image_normalizer:
+    name: single_image_normalizer
+
+backbone:
+  name: NotebookRepDWNetExp1
+  num_classes: 3
+  pretrained: false
+  num_dw_branches: 4
+  num_pw_branches: 4
+  use_se: false
+  base_c: 16
+  deploy: false
+  # Channel fields below require En/De factory support; baseline RepDWNet must not be used.
+  bilinear: true
+  stem_output_channels: 16
+  encoder_output_channels: [16, 32, 64, 64]
+  decoder_concat_channels: [128, 96, 48, 32]
+  decoder_mid_channels: [128, 64, 32, 16]
+  decoder_output_channels: [64, 32, 16, 16]
+  head_in_channels: 16
+  # Stem: DoubleConv. Down/Up: RepDW + pointwise RPD, original conditional identity.
+  # Keep DW 1x1 and automatic identity; no skip projection and no forced identity.
+
+train:
+  # Adam is currently selected in configure_optimizers; verify at runtime.
+  optimizer: Adam
+  strategy: ddp
+  start_from_scratch: true
+  resume_checkpoint: null
+  drop_last: true
+  step_settings:
+    - regular
+  max_epoch: 100
+  devices: 2
+  benchmark: True
+  loss: xentropy
+  learning_rate: 2.0e-4
+  scheduler: 'cosine'
+  warmup_epochs: 5
+  weight_decay: 2.0e-04
+  batch_size: 4
+  precision: 32
+  accumulate_grad_batches: 1
+  shuffle: true
+  
+  early_stopping:
+    mode: 'none'
+  
+  vis_train_every_x_epochs: 4096
+  postprocess_train_every_x_epochs: 4096
+
+  class_weights:
+    - 1.47
+    - 5.06
+    - 10.02
+
+  color_data_augmentations:
+    random_global_brightness:
+      min_brightness_factor: 0.6
+      max_brightness_factor: 1.4
+    random_global_contrast:
+      min_contrast_factor: 0.6
+      max_contrast_factor: 1.4
+    random_global_saturation:
+      min_saturation_factor: 0.8
+      max_saturation_factor: 1.2
+    random_global_hue:
+      min_hue_factor: -0.0125
+      max_hue_factor: 0.0125
+
+  geometric_data_augmentations:
+    random_hflip: null
+    random_vflip: null
+    random_scale:
+      min_scale: 1.0
+      max_scale: 1.1
+    random_crop:
+      height: 768
+      width: 768
+
+val:
+  drop_last: true
+  step_settings:
+    - regular
+  devices: 2
+  num_nodes: 1
+  batch_size: 4
+  check_val_every_n_epoch: 5
+  vis_val_every_x_epochs: 4096
+  postprocess_val_every_x_epochs: 4096
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+test:
+  step_settings:
+    - regular
+  devices: 1
+  batch_size: 1
+  geometric_data_augmentations:
+    center_crop:
+      height: 1024
+      width: 1024
+
+visualizers:
+  input_image_visualizer: null
+  semantic_map_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_correct_incorrect_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  semantic_overlay_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+  ground_truth_visualizer:
+    classes_to_colors: {0: [0, 0, 0], 1: [0, 255, 0], 2: [255, 0, 0]}
+
+postprocessors:
+  arg_max_classes_postprocessor: null
+
+# Requested tracking contract from handoff sections 4-6.
+# The runner must populate runtime values; null means not yet measured/assigned.
+tracking:
+  handoff: docs/dlogs/P2_ModiRPD_EnDe/HANDOFF_EnDe_Fresh_Training.md
+  baseline: B1_run5_repdwnet
+  source_repository: https://github.com/FUAVX/RPD_Reproduce.git
+  source_revision: b53d8ba1ddfd41ebd37c9021b1cb6cdee332084e
+  notebook_revision: null
+  run_id: null
+  output_dir_template: 'log_dir/{scenario}/{source_revision}/{new_run_id}/'
+  overwrite_existing_run: false
+  start_from_scratch: true
+  resume_checkpoint: null
+  restart_after_interruption: new_run_from_epoch_0
+  expected_world_size: 2
+  batch_per_gpu: 4
+  accumulate_grad_batches: 1
+  effective_batch_size: 8
+  precision: 32
+  num_parameters: null
+  num_train_images: null
+  expected_num_val_images: 772
+  expected_processed_val_images: 768
+  train_drop_last: true
+  val_drop_last: true
+  io_retry:
+    enabled: false
+    # If enabled later, use the same finite policy for En and De.
+    skip_sample: false
+    substitute_empty_mask: false
+    on_exhaustion: fail_run
+  preflight:
+    compare_model_definitions: true
+    verify_experiment_factory: true
+    check_stage_channels: true
+    check_even_and_odd_input_shapes: true
+    check_finite_output: true
+    use_separate_process: true
+    verify_runtime_recipe: true
+    verify_no_input_checkpoint: true
+    verify_dataset_images_and_masks: true
+  validation_history:
+    exclude_sanity_metrics: true
+    write_rank_zero_only: true
+    # Metric compute/log with DDP synchronization must execute on every rank.
+    expected_epochs: [4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 89, 94, 99]
+    expected_count: 20
+  checkpoints:
+    save_best_miou: true
+    save_best_weed_iou: true
+    save_last: true
+    record_epoch_and_metric: true
+  artifacts:
+    - experiment_manifest.json
+    - logs/
+    - lightning_logs/
+    - checkpoints/
+    - val_history.csv
+    - val_curves.png
+    - val_summary.txt
+  deployment:
+    use_experiment_model: true
+    strict_load_before_fusion: true
