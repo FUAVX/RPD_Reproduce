@@ -1,5 +1,6 @@
 """Runtime guards and artifacts for the fresh En/De experiments."""
 import csv
+import faulthandler
 import hashlib
 import json
 import math
@@ -98,6 +99,7 @@ class FreshEnDeCallback(Callback):
             temporary.replace(path)
 
     def on_fit_start(self, trainer, pl_module):
+        print(f"[RUNTIME rank={trainer.global_rank}] fit setup: WORLD_SIZE={trainer.world_size}", flush=True)
         if trainer.world_size != 2 or trainer.num_devices != 2 or str(trainer.accelerator.__class__.__name__) != 'CUDAAccelerator':
             raise RuntimeError('Main fresh En/De run requires 2 CUDA GPUs and WORLD_SIZE=2.')
         if int(os.environ.get('WORLD_SIZE', '0')) != 2:
@@ -145,7 +147,23 @@ class FreshEnDeCallback(Callback):
             status='running', validation_epochs=[], checkpoints={})
         self._write(trainer)
 
+    def on_sanity_check_start(self, trainer, pl_module):
+        print(f'[RUNTIME rank={trainer.global_rank}] sanity validation started', flush=True)
+
+    def on_sanity_check_end(self, trainer, pl_module):
+        print(f'[RUNTIME rank={trainer.global_rank}] sanity validation finished', flush=True)
+
+    def on_train_start(self, trainer, pl_module):
+        faulthandler.cancel_dump_traceback_later()
+        print(f'[RUNTIME rank={trainer.global_rank}] training started: epoch={trainer.current_epoch}', flush=True)
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        if trainer.is_global_zero:
+            print(f'[EPOCH] start {trainer.current_epoch}', flush=True)
+
     def on_train_epoch_end(self, trainer, pl_module):
+        if trainer.is_global_zero:
+            print(f'[EPOCH] end {trainer.current_epoch}', flush=True)
         if self.manifest is not None:
             self.manifest['last_completed_train_epoch'] = trainer.current_epoch
             self._write(trainer)

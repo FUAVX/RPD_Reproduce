@@ -3,10 +3,17 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import os
+import faulthandler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+print('[PREFLIGHT] process started; importing Torch', flush=True)
+if os.environ.get('ENDE_STARTUP_DIAGNOSTICS') == '1':
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(300, repeat=True)
 import torch
 import yaml
+print('[PREFLIGHT] importing project models', flush=True)
 from models import get_backbone
 from models.rpdnet.RepDWNet import RepDWNet, DoubleConv, DoubleConv_down_repdw, Down_repdw, Up_repdw
 from models.rpdnet.RepDWNetEnDe import NotebookRepDWNetExp1, NotebookRepDWNetExp2
@@ -14,6 +21,7 @@ from utils.ende_training import check_dataset, validate_fresh_config
 
 
 def check_model(cfg):
+    print('[PREFLIGHT] model/factory and stage channels', flush=True)
     torch.set_num_threads(2)
     torch.manual_seed(cfg['seed'])
     model = get_backbone(cfg).eval()
@@ -44,6 +52,7 @@ def check_model(cfg):
     results = []
     with torch.no_grad():
         for h, w in [(64, 64), (65, 67)]:
+            print(f'[PREFLIGHT] forward input {h}x{w}', flush=True)
             output = model(torch.randn(1, 3, h, w))
             assert tuple(output.shape) == (1, 3, h, w)
             assert torch.isfinite(output).all()
@@ -51,6 +60,7 @@ def check_model(cfg):
             results.append(dict(input=[1, 3, h, w], output=list(output.shape), stages=dict(shapes)))
     for handle in handles:
         handle.remove()
+    print('[PREFLIGHT] backward gradients', flush=True)
     model.train()
     loss = torch.nn.functional.cross_entropy(model(torch.randn(2, 3, 32, 32)),
                                              torch.zeros(2, 32, 32, dtype=torch.long))
@@ -58,6 +68,7 @@ def check_model(cfg):
     assert torch.isfinite(loss)
     assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())
     # Checkpoint must strict-load into the same experiment, then fuse existing B1 modules.
+    print('[PREFLIGHT] strict load and fusion', flush=True)
     restored = get_backbone(cfg).eval()
     restored.load_state_dict(model.state_dict(), strict=True)
     x = torch.randn(1, 3, 33, 35)
@@ -85,14 +96,18 @@ def main():
     parser.add_argument('--check-dataset', action='store_true')
     args = parser.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
+    print('[PREFLIGHT] recipe and pinned block hashes', flush=True)
     hashes = validate_fresh_config(cfg, {})
     result = check_model(cfg)
     result['block_sha256'] = hashes
     if args.check_dataset:
+        print('[PREFLIGHT] dataset image/mask coverage', flush=True)
         result['dataset'] = check_dataset(cfg)
     if args.output:
         Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
-    print(json.dumps(result, indent=2))
+    faulthandler.cancel_dump_traceback_later()
+    print('[PREFLIGHT] complete', flush=True)
+    print(json.dumps(result, indent=2), flush=True)
 
 
 if __name__ == '__main__':

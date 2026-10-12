@@ -7,6 +7,13 @@ import os
 import time
 from typing import Dict, Any, List, Optional, Tuple
 import warnings
+import faulthandler
+
+# Visible before importing NumPy/Torch/Lightning, even if an import stalls.
+print(f"[BOOT rank={os.environ.get('RANK', '0')}] training process started", flush=True)
+if os.environ.get('ENDE_STARTUP_DIAGNOSTICS') == '1':
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(300, repeat=True)
 
 # Tắt tất cả warnings rác từ thư viện cũ
 os.environ["PYTHONWARNINGS"] = "ignore"
@@ -14,6 +21,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 warnings.filterwarnings("ignore")
 
 # NumPy 2.0 compatibility patch for older PyTorch Lightning / TorchMetrics
+print("[BOOT] importing numpy", flush=True)
 import numpy as np
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -26,10 +34,12 @@ with warnings.catch_warnings():
             pass
 
 import yaml
+print("[BOOT] importing Lightning/Torch", flush=True)
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping, Callback
 
+print("[BOOT] importing project callbacks/dataset/models", flush=True)
 from callbacks import (ConfigCallback, PostprocessorCallback, VisualizerCallback, get_postprocessors, get_visualizers, ComputeProfilingCallback)
 from datasets import get_data_module
 from models import get_backbone, get_criterion, model_multimetrics
@@ -87,23 +97,20 @@ class TeeStream:
     """Duplicate stdout/stderr to a log file while keeping terminal output active."""
     def __init__(self, original_stream, log_file):
         self.original_stream = original_stream
-        self.log_file = log_file
+        self.log_files = list(log_file) if isinstance(log_file, (list, tuple)) else [log_file]
 
     def write(self, data):
         self.original_stream.write(data)
         self.original_stream.flush()
-        try:
-            self.log_file.write(data)
-            self.log_file.flush()
-        except Exception:
-            pass
+        for stream in self.log_files:
+            stream.write(data)
+            stream.flush()
+        return len(data)
 
     def flush(self):
         self.original_stream.flush()
-        try:
-            self.log_file.flush()
-        except Exception:
-            pass
+        for stream in self.log_files:
+            stream.flush()
 
     def isatty(self):
         return getattr(self.original_stream, 'isatty', lambda: False)()
@@ -189,26 +196,19 @@ def load_config(path_to_config_file: str) -> Dict:
 def main():
     args = parse_args()
 
-    # Setup automated file logging if not already captured by outer runner script
-    if not os.environ.get("RUNNER_CAPTURING_LOG"):
-        logs_dir = os.path.join(args['export_dir'], 'logs')
-        os.makedirs(logs_dir, exist_ok=True)
-        timestamp_str = time.strftime('%Y%m%d_%H%M%S')
-        log_file_path = os.path.join(logs_dir, f"train_{timestamp_str}_rank{os.environ.get('RANK', '0')}.log")
-        latest_log_path = os.path.join(logs_dir, "training.log")
-        try:
-            log_fh = open(log_file_path, "a", encoding="utf-8")
-            sys.stdout = TeeStream(sys.stdout, log_fh)
-            sys.stderr = TeeStream(sys.stderr, log_fh)
-            print(f"[Logging] Phiên huấn luyện tự động ghi log tại: {log_file_path}")
-            try:
-                import shutil
-                if int(os.environ.get('RANK', '0')) == 0:
-                    shutil.copyfile(log_file_path, latest_log_path)
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"[Logging Warning] Không thể mở file log {log_file_path}: {e}")
+    # Each rank always writes its own log. The notebook owns the combined
+    # training.log when capturing; direct launches update rank-0 training.log live.
+    logs_dir = os.path.join(args['export_dir'], 'logs')
+    os.makedirs(logs_dir, exist_ok=True)
+    rank = int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0')))
+    timestamp_str = time.strftime('%Y%m%d_%H%M%S')
+    log_file_path = os.path.join(logs_dir, f"train_{timestamp_str}_rank{rank}.log")
+    log_files = [open(log_file_path, 'a', encoding='utf-8', buffering=1)]
+    if rank == 0 and os.environ.get('RUNNER_CAPTURING_LOG') != '1':
+        log_files.append(open(os.path.join(logs_dir, 'training.log'), 'a', encoding='utf-8', buffering=1))
+    sys.stdout = TeeStream(sys.stdout, log_files)
+    sys.stderr = TeeStream(sys.stderr, log_files)
+    print(f"[Logging rank={rank}] Live process log: {log_file_path}", flush=True)
 
     cfg = load_config(args['config'])
 
@@ -270,6 +270,7 @@ def main():
         cfg['seed'] = seed_val
     else:
         seed_val = cfg['seed']
+    print(f"[STAGE rank={rank}] seed/model/dataset initialization", flush=True)
     seed_everything(seed_val) 
 
     datasetmodule = get_data_module(cfg) 
@@ -455,6 +456,7 @@ def main():
 
     train_accum_grad = int(cfg['train'].get('accumulate_grad_batches', 1))
 
+    print(f"[STAGE rank={rank}] constructing Trainer", flush=True)
     # Setup trainer
     trainer = Trainer(
         accelerator='gpu' if fresh_ende else cfg['train'].get('accelerator', 'auto'),
@@ -470,7 +472,7 @@ def main():
         logger=tb_logger)
 
     if args['ckpt_path'] is None:
-        print('Train from scratch.')
+        print(f'[STAGE rank={rank}] entering Trainer.fit from epoch 0', flush=True)
         trainer.fit(seg_module, datasetmodule)
     elif (args['ckpt_path'] is not None) and (not args['resume']):
         print('Load pretrained model weights but other params (e.g. learning rate) start from scratch.')

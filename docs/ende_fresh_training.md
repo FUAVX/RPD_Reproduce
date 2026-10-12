@@ -62,3 +62,15 @@ python tests/test_ende_contract.py
 torchrun --standalone --nproc_per_node=2 tests/ende_smoke.py --config configs/p2_scenarios/P2_EncoderHalf.yaml --output /tmp/ende-smoke-new-en
 torchrun --standalone --nproc_per_node=2 tests/ende_smoke.py --config configs/p2_scenarios/P2_DecoderHalf.yaml --output /tmp/ende-smoke-new-de
 ```
+
+## Startup and live logging (2026-10-13)
+
+The shared notebook now creates `/kaggle/working/notebook_logs/<startup_id>/launcher.log` and `runner_status.json` before installing or importing third-party dependencies. NVIDIA diagnostics have a 30-second deadline and dependencies a 1,200-second deadline. A failure stops execution and records its stage.
+
+For the selected scenario, logging starts before clone in `<run_dir>/logs/`. Git/config-import/GPU-probe steps have 180-second deadlines; preflight has a 900-second deadline. Each process combines stdout/stderr into a live stage log and streams it into notebook output. It handles output without a newline. Timeouts terminate the complete child process group. `runner_status.json` records the current stage, PID, elapsed time, output bytes and failure details.
+
+En/De has a 900-second startup deadline until rank 0 emits the actual `training started` callback marker (after imports, DDP initialization and sanity validation). Once that marker arrives, training has no total-duration deadline. `logs/training.log` is updated continuously with both torchrun ranks' output; separate `train_*_rank0.log` and `rank1.log` remain available. The launcher emits a heartbeat every 30 seconds showing how long it has waited and when the last process output arrived. A heartbeat only proves that the launcher is alive; it does not prove epochs are advancing. Imports, preflight subchecks, fit setup, sanity checks and epoch boundaries emit explicit markers. If startup stalls, a traceback is dumped after 300 seconds and repeated until training starts.
+
+The direct CLI also updates `training.log` live from rank 0. It no longer copies a one-time snapshot at startup. No channel table, baseline block, augmentation, loss or training recipe is changed by this logging update. The cause of the user's eight-hour silent Kaggle run has not been reproduced; these diagnostics identify the stage on the next execution.
+
+Logging verification: four runner unit tests passed (live stdout/stderr without a newline, heartbeat, subprocess errors, timeout cleanup and startup-marker deadline release); TeeStream live-write regression and fresh-contract tests passed. Both real En/De preflights and both two-rank CPU DDP smoke runs passed through the streaming runner. Actual training CLI failure paths for both scenarios persisted boot markers, rank logs and full recipe-guard tracebacks. Notebook format/syntax and embedded helper were validated. Two-GPU Kaggle training was not executed in these checks.

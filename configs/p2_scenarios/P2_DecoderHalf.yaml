@@ -143,7 +143,7 @@ tracking:
   baseline: B1_run5_repdwnet
   source_repository: https://github.com/FUAVX/RPD_Reproduce.git
   source_revision: b53d8ba1ddfd41ebd37c9021b1cb6cdee332084e
-  notebook_revision: a687e67a399c1519ea19ff87621f791afd622aa7
+  notebook_revision: 314655b0a604119d71eb069d652e4b59d5893e66
   executed_cell_sha256: null
   runtime_source_revision: null
   run_id: null

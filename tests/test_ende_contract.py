@@ -56,7 +56,7 @@ class FreshContractTests(unittest.TestCase):
             network = torch.nn.Linear(2, 3)
             network.channel_table = dict(stem=16)
             module = SimpleNamespace(network=network, val_history=[])
-            trainer = SimpleNamespace(is_global_zero=True, world_size=2, num_devices=2,
+            trainer = SimpleNamespace(is_global_zero=True, global_rank=0, world_size=2, num_devices=2,
                 accelerator=type('CUDAAccelerator', (), {})(), local_rank=0,
                 current_epoch=0, global_step=0, accumulate_grad_batches=1, precision=32,
                 optimizers=[torch.optim.Adam(network.parameters(), lr=2e-4)],
