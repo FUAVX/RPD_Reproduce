@@ -375,6 +375,12 @@ class SegmentationNetwork(pl.LightningModule):
         self.log('val_weed_recall', val_weed_r, on_epoch=True, sync_dist=True)
         self.log('val_weed_f1', val_weed_f1, on_epoch=True, sync_dist=True)
 
+        # Lightning log_dir can broadcast under DDP; resolve it on every rank.
+        log_dir = self.trainer.log_dir
+        self.validation_step_outputs.clear()
+        if self.trainer.sanity_checking or not self.trainer.is_global_zero:
+            return
+
         # Record validation history
         current_lr = float(self.trainer.optimizers[0].param_groups[0]['lr']) if (self.trainer.optimizers and len(self.trainer.optimizers) > 0) else float(self.learning_rate)
         train_loss_val = float(self.trainer.callback_metrics.get('train_loss', 0.0))
@@ -405,7 +411,7 @@ class SegmentationNetwork(pl.LightningModule):
         except Exception as e:
             print(f"[Warning] Failed to write val_history.csv: {e}")
 
-        path_to_classwise_dir = os.path.join(self.trainer.log_dir, 'val', 'evaluation', f'epoch-{epoch:06d}')
+        path_to_classwise_dir = os.path.join(log_dir, 'val', 'evaluation', f'epoch-{epoch:06d}')
         save_metric(iou_per_class, path_to_classwise_dir, 'IoU')
         save_metric(precision_per_class, path_to_classwise_dir, 'Precision')
         save_metric(f1_per_class, path_to_classwise_dir, 'F1')

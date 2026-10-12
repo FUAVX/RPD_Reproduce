@@ -4,8 +4,7 @@
 # Recipe: section 4.2; preflight/artifacts: sections 5 and 6
 # Cosine + 5 warmup epochs, Adam, LR/WD 2e-4, FP32, epochs 0-99
 # 2 GPU DDP, batch 4/GPU, accumulation 1, effective batch 8
-# New channel/fresh/tracking fields are a contract for subsequent runner updates.
-# YAML alone does not implement the model, resume guards, or artifact handling.
+# Channel/fresh/tracking fields are implemented by RepDWNetEnDe and FreshEnDeCallback.
 # ==============================================================================
 
 seed: 1682409321
@@ -30,7 +29,7 @@ backbone:
   use_se: false
   base_c: 16
   deploy: false
-  # Channel fields below require En/De factory support; baseline RepDWNet must not be used.
+  # Explicit channels validated by the En/De factory against handoff section 3.
   bilinear: true
   stem_output_channels: 16
   encoder_output_channels: [32, 64, 128, 128]
@@ -137,14 +136,16 @@ visualizers:
 postprocessors:
   arg_max_classes_postprocessor: null
 
-# Requested tracking contract from handoff sections 4-6.
+# Tracking requirements from handoff sections 4-6.
 # The runner must populate runtime values; null means not yet measured/assigned.
 tracking:
   handoff: docs/dlogs/P2_ModiRPD_EnDe/HANDOFF_EnDe_Fresh_Training.md
   baseline: B1_run5_repdwnet
   source_repository: https://github.com/FUAVX/RPD_Reproduce.git
   source_revision: b53d8ba1ddfd41ebd37c9021b1cb6cdee332084e
-  notebook_revision: null
+  notebook_revision: a687e67a399c1519ea19ff87621f791afd622aa7
+  executed_cell_sha256: null
+  runtime_source_revision: null
   run_id: null
   output_dir_template: 'log_dir/{scenario}/{source_revision}/{new_run_id}/'
   overwrite_existing_run: false

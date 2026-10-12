@@ -194,7 +194,7 @@ def main():
         logs_dir = os.path.join(args['export_dir'], 'logs')
         os.makedirs(logs_dir, exist_ok=True)
         timestamp_str = time.strftime('%Y%m%d_%H%M%S')
-        log_file_path = os.path.join(logs_dir, f"train_{timestamp_str}.log")
+        log_file_path = os.path.join(logs_dir, f"train_{timestamp_str}_rank{os.environ.get('RANK', '0')}.log")
         latest_log_path = os.path.join(logs_dir, "training.log")
         try:
             log_fh = open(log_file_path, "a", encoding="utf-8")
@@ -203,7 +203,8 @@ def main():
             print(f"[Logging] Phiên huấn luyện tự động ghi log tại: {log_file_path}")
             try:
                 import shutil
-                shutil.copyfile(log_file_path, latest_log_path)
+                if int(os.environ.get('RANK', '0')) == 0:
+                    shutil.copyfile(log_file_path, latest_log_path)
             except Exception:
                 pass
         except Exception as e:
@@ -258,6 +259,12 @@ def main():
         cfg['train']['accumulate_grad_batches'] = args['accumulate_grad_batches']
         print(f"[Config Override] accumulate_grad_batches -> {args['accumulate_grad_batches']}")
     
+    from utils.ende_training import is_ende, validate_fresh_config, FreshEnDeCallback
+    fresh_ende = is_ende(cfg)
+    if fresh_ende:
+        block_hashes = validate_fresh_config(cfg, args)
+        cfg['val']['devices'] = cfg['train']['devices']
+
     if cfg.get('seed') is None:
         seed_val = int(time.time())
         cfg['seed'] = seed_val
@@ -364,6 +371,9 @@ def main():
         config_callback,
     ]
 
+    if fresh_ende:
+        all_callbacks.append(FreshEnDeCallback(cfg, args, block_hashes))
+
     # Cấu hình EarlyStopping linh hoạt (Mặc định: PaperEarlyStopping theo chuẩn bài báo IEEE TGRS 2026: 3 lần val liên tiếp có val_loss <= 0.1)
     use_early_stopping = not args['no_early_stopping']
     es_cfg = cfg['train'].get('early_stopping', {})
@@ -427,7 +437,8 @@ def main():
         tb_logger = TensorBoardLogger(
             save_dir=args['export_dir'],
             name="lightning_logs",
-            default_hp_metric=False
+            default_hp_metric=False,
+            version="" if fresh_ende else None
         )
     except Exception:
         tb_logger = True
@@ -446,7 +457,7 @@ def main():
 
     # Setup trainer
     trainer = Trainer(
-        accelerator=cfg['train'].get('accelerator', 'auto'),
+        accelerator='gpu' if fresh_ende else cfg['train'].get('accelerator', 'auto'),
         devices=train_devices,
         strategy=train_strategy,
         benchmark=cfg['train'].get('benchmark', True),
@@ -472,8 +483,9 @@ def main():
 
     # Generate validation curves and summary report automatically
     try:
-        from utils.plot_val_curves import generate_curves_and_summary
-        generate_curves_and_summary(args['export_dir'])
+        if trainer.is_global_zero:
+            from utils.plot_val_curves import generate_curves_and_summary
+            generate_curves_and_summary(args['export_dir'])
     except Exception as e:
         print(f"[Post-Train Notice] Automatic plot generation skipped: {e}")
 

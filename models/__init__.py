@@ -41,6 +41,14 @@ def get_backbone(cfg: Dict) -> nn.Module:
         convert = cfg['backbone'].get('convert', False)
         return RPDNet(num_classes, deploy=deploy, convert=convert)
 
+    if cfg['backbone']['name'] in ('NotebookRepDWNetExp1', 'NotebookRepDWNetExp2'):
+        from models.rpdnet.RepDWNetEnDe import NotebookRepDWNetExp1, NotebookRepDWNetExp2
+        settings = dict(cfg['backbone'])
+        name = settings.pop('name')
+        model_class = {'NotebookRepDWNetExp1': NotebookRepDWNetExp1,
+                       'NotebookRepDWNetExp2': NotebookRepDWNetExp2}[name]
+        return model_class(**settings)
+
     if cfg['backbone']['name'] == 'RepDWNet':
         deploy = cfg['backbone'].get('deploy', False)
         use_se = cfg['backbone'].get('use_se', False)

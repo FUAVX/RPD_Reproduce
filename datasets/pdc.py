@@ -231,7 +231,7 @@ class PDCModule(pl.LightningDataModule):
         n_workers: int = self.cfg['data']['num_workers']
 
         loader = DataLoader(self.train_ds, batch_size=batch_size, shuffle=shuffle, num_workers=n_workers,
-                            drop_last=True, pin_memory=True, persistent_workers=(n_workers > 0))
+                            drop_last=self.cfg['train'].get('drop_last', True), pin_memory=True, persistent_workers=(n_workers > 0))
 
         return loader
 
@@ -239,7 +239,7 @@ class PDCModule(pl.LightningDataModule):
         batch_size: int = self.cfg['val']['batch_size']
         n_workers: int = self.cfg['data']['num_workers']
 
-        loader = DataLoader(self.val_ds, batch_size=batch_size, num_workers=n_workers, shuffle=False, drop_last=True,
+        loader = DataLoader(self.val_ds, batch_size=batch_size, num_workers=n_workers, shuffle=False, drop_last=self.cfg['val'].get('drop_last', True),
                             pin_memory=True, persistent_workers=(n_workers > 0))
 
         return loader

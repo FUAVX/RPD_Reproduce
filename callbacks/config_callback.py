@@ -12,7 +12,11 @@ class ConfigCallback(Callback):
         self.cfg = cfg
 
     def setup(self, trainer, pl_module, stage=None) -> None:
-        export_dir = os.path.join(trainer.log_dir, 'configuration')
+        # Resolve Lightning's potentially synchronized property on every rank.
+        log_dir = trainer.log_dir
+        if not trainer.is_global_zero:
+            return
+        export_dir = os.path.join(log_dir, 'configuration')
         if not os.path.exists(export_dir):
             os.makedirs(export_dir)
 
