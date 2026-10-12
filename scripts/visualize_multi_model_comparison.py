@@ -44,6 +44,7 @@ COLOR_MAP = {
     0: (35, 35, 35),       # Background/Soil: Xám đậm
     1: (46, 204, 113),     # Crop: Xanh lá tươi
     2: (231, 76, 60),      # Weed: Đỏ tươi
+    255: (255, 255, 255),  # Ignore/boundary: Trắng (pixel không tính loss, trước đây hiện đen)
 }
 
 
@@ -388,12 +389,53 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             strip.save(out_png, quality=95)
             print(f"  ✓ Đã lưu: {os.path.basename(out_png)}")
 
+            # Zoom strip: cửa sổ 560px quanh vùng cỏ dày nhất (đọc được khi trình bày/chiếu slide)
+            _zcontents = [r["rgb_pil"].convert("RGB"), colorize_mask(r["gt_np"]),
+                          colorize_mask(r["preds"]["B0"]), colorize_mask(r["preds"]["B1"]),
+                          colorize_mask(r["preds"]["P2_ex1"]), colorize_mask(r["preds"]["P2_ex2"])]
+            _zlabels = ["RGB", "GT", "B0", "B1", "P2_ex1", "P2_ex2"]
+            _gh, _gw = r["gt_np"].shape
+            _WIN2, _ST2 = min(560, _gh, _gw), 32
+            _zx, _zy = (_gw - _WIN2) // 2, (_gh - _WIN2) // 2
+            if int((r["gt_np"] == 2).sum()) >= 300:
+                _red2 = (r["gt_np"] == 2).astype(np.int32)
+                _ii2 = np.zeros((_gh + 1, _gw + 1), dtype=np.int64)
+                _ii2[1:, 1:] = _red2.cumsum(0).cumsum(1)
+                _best2 = -1
+                for _yy in range(0, _gh - _WIN2 + 1, _ST2):
+                    for _xx in range(0, _gw - _WIN2 + 1, _ST2):
+                        _s2 = (_ii2[_yy + _WIN2, _xx + _WIN2] - _ii2[_yy, _xx + _WIN2]
+                               - _ii2[_yy + _WIN2, _xx] + _ii2[_yy, _xx])
+                        if _s2 > _best2:
+                            _best2, _zx, _zy = _s2, _xx, _yy
+            _zbox = (_zx, _zy, _zx + _WIN2, _zy + _WIN2)
+            try:
+                _zfont = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+            except Exception:
+                _zfont = None
+            _UP2, _GAP2, _LH2, _NC2 = 600, 10, 46, 3
+            _nrow2 = (len(_zcontents) + _NC2 - 1) // _NC2
+            _zstrip = Image.new("RGB", (_UP2 * _NC2 + _GAP2 * (_NC2 - 1),
+                                        (_UP2 + _LH2) * _nrow2 + _GAP2 * (_nrow2 - 1)),
+                                color=(25, 25, 25))
+            _zdraw = ImageDraw.Draw(_zstrip)
+            for _k, (_lab, _cim) in enumerate(zip(_zlabels, _zcontents)):
+                _rr, _cc2 = divmod(_k, _NC2)
+                _px = _cc2 * (_UP2 + _GAP2)
+                _py = _rr * (_UP2 + _LH2 + _GAP2)
+                _zstrip.paste(_cim.crop(_zbox).resize((_UP2, _UP2), Image.LANCZOS), (_px, _py + _LH2))
+                _zdraw.text((_px + 10, _py + 6), _lab, font=_zfont, fill=(255, 255, 255))
+            out_zoom = os.path.join(cat_dir, f"rank{rank:02d}_{os.path.splitext(fname)[0]}_zoom.jpg")
+            _zstrip.save(out_zoom, "JPEG", quality=82)
+            print(f"  ✓ Đã lưu: {os.path.basename(out_zoom)}")
+
             gallery_items.append({
                 "category": cat_info["title"],
                 "filename": fname,
                 "lighting": r["lighting"],
                 "path": out_png,
                 "rel_path": os.path.relpath(out_png, output_dir),
+                "zoom_rel_path": os.path.relpath(out_zoom, output_dir),
                 "st": st
             })
 
@@ -403,7 +445,7 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
         f.write("# Thư Viện Trực Quan Hóa So Sánh Đa Mô Hình: B0 vs B1 vs P2 (ex1 & ex2)\n\n")
         f.write("Bản đồ 7 khung hình đối soát (7-Panel Strip):\n")
         f.write("1. **RGB**: Ảnh chụp thực địa UAV $768 \\times 768$.\n")
-        f.write("2. **Ground Truth**: Cây trồng (Xanh lá), Cỏ dại (Đỏ), Đất (Xám).\n")
+        f.write("2. **Ground Truth**: Cây trồng (Xanh lá), Cỏ dại (Đỏ), Đất (Xám), viền Trắng = pixel ignore 255 (không tính loss).\n")
         f.write("3. **B0 (PDC Baseline)**: Khảo sát hiện tượng bắt nhầm bóng râm.\n")
         f.write("4. **B1 (RepDWNet 4DW+4PW)**: Cân bằng không gian - kênh tối ưu.\n")
         f.write("5. **P2_ex1 (2DW+4PW)**: Tác động của việc giảm 50% nhánh không gian $3\\times 3$.\n")
@@ -420,7 +462,8 @@ def run_multi_model_pipeline(dataset_dir: str, models: Dict[str, Any], output_di
             f.write(f"- **B1**: Weed IoU `{it['st']['B1']['iou']:.1f}%` | Precision `{it['st']['B1']['prec']:.1f}%`\n")
             f.write(f"- **P2_ex1**: Weed IoU `{it['st']['P2_ex1']['iou']:.1f}%` | Precision `{it['st']['P2_ex1']['prec']:.1f}%`\n")
             f.write(f"- **P2_ex2**: Weed IoU `{it['st']['P2_ex2']['iou']:.1f}%` | Precision `{it['st']['P2_ex2']['prec']:.1f}%`\n\n")
-            f.write(f"![{it['filename']}]({it['rel_path']})\n\n---\n\n")
+            f.write(f"![{it['filename']}]({it['rel_path']})\n\n")
+            f.write(f"**Bản zoom đọc được khi trình bày:** ![{it['filename']} zoom]({it['zoom_rel_path']})\n\n---\n\n")
 
     print(f"\n[Hoàn Tất] Đã xuất thư viện trực quan hóa tại: {md_path}")
 
