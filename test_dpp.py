@@ -13,8 +13,26 @@ from models.rpdnet.dpp import LiteDPPSym, make_downsampling, dpp_optimizer_group
 from models.rpdnet.RPD_Module import RPD_model_deploy
 
 
+def test_author_uniform_initialization():
+    for channels in (16, 32, 64, 128):
+        bound = channels ** -0.5
+        torch.manual_seed(1682409321)
+        expected_alpha = torch.empty(channels).uniform_(-bound, bound)
+        expected_lambda = torch.empty(channels).uniform_(-bound, bound)
+        torch.manual_seed(1682409321)
+        layer = LiteDPPSym(channels)
+        torch.testing.assert_close(layer.log_alpha, expected_alpha, rtol=0, atol=0)
+        torch.testing.assert_close(layer.log_lambda, expected_lambda, rtol=0, atol=0)
+        for parameter in (layer.log_alpha, layer.log_lambda):
+            assert torch.all((parameter >= -bound) & (parameter <= bound))
+            assert parameter.unique().numel() > 1
+        assert not torch.equal(layer.log_alpha, layer.log_lambda)
+        torch.testing.assert_close(layer.alpha, expected_alpha.exp(), rtol=0, atol=0)
+        torch.testing.assert_close(layer.exponent, expected_lambda.exp(), rtol=0, atol=0)
+
+
 def test_formula_shapes_and_limits():
-    layer = LiteDPPSym(2, init_log_std=0).double()
+    layer = LiteDPPSym(2).double()
     with torch.no_grad():
         layer.log_alpha.copy_(torch.tensor([0.2, -0.7]))
         layer.log_lambda.copy_(torch.tensor([0.5, 0.9]))
@@ -26,7 +44,8 @@ def test_formula_shapes_and_limits():
             for h in range(3):
                 for w in range(4):
                     window = x[b, c, 2*h:2*h+2, 2*w:2*w+2]
-                    reward = (window - window.mean()).square().add(0.001).pow(layer.exponent[c] / 2)
+                    energy = (window - window.mean()).square().add(0.001)
+                    reward = (energy / energy.mean()).pow(layer.exponent[c] / 2)
                     weights = layer.alpha[c] + reward
                     expected[b, c, h, w] = (weights * window).sum() / weights.sum()
     torch.testing.assert_close(actual, expected)
@@ -42,9 +61,51 @@ def test_formula_shapes_and_limits():
     assert torch.isfinite(layer(x)).all()
 
 
+def test_author_graph_forward_and_gradients():
+    # Independent reference follows the released avgpool/nearest-upsample graph.
+    torch.manual_seed(23)
+    layer = LiteDPPSym(3).double()
+    x = torch.randn(2, 3, 6, 8, dtype=torch.double, requires_grad=True)
+    reference_x = x.detach().clone().requires_grad_()
+    reference_alpha = layer.log_alpha.detach().clone().requires_grad_()
+    reference_lambda = layer.log_lambda.detach().clone().requires_grad_()
+    pool = torch.nn.functional.avg_pool2d
+    up = lambda value: torch.nn.functional.interpolate(value, scale_factor=2, mode='nearest')
+    difference = reference_x - up(pool(reference_x, 2))
+    energy = difference.square() + 0.001
+    normalized = energy / up(pool(energy, 2))
+    weights = normalized.pow(reference_lambda.exp().view(1, 3, 1, 1) / 2)
+    weights = weights + reference_alpha.exp().view(1, 3, 1, 1)
+    expected = pool(reference_x * weights, 2) / pool(weights, 2)
+    actual = layer(x)
+    torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-10)
+    upstream = torch.randn_like(expected)
+    actual_grads = torch.autograd.grad(actual, (x, layer.log_alpha, layer.log_lambda), upstream)
+    expected_grads = torch.autograd.grad(expected, (reference_x, reference_alpha, reference_lambda), upstream)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-9, atol=1e-10)
+
+
+def test_author_alpha_projection():
+    layer = LiteDPPSym(1).double()
+    with torch.no_grad():
+        layer.log_alpha.fill_(12)
+        layer.log_lambda.zero_()
+    # Logging must reflect capped effective alpha, even before the next forward.
+    torch.testing.assert_close(layer.alpha, torch.tensor([10.], dtype=torch.double).exp())
+    x = torch.tensor([[[[0., 1.], [2., 8.]]]], dtype=torch.double)
+    layer(x).sum().backward()
+    assert layer.log_alpha.item() == 10
+    assert layer.log_alpha.grad is not None and layer.log_alpha.grad.abs().sum() > 0
+    # Repeated forwards in the normal range must support a combined backward.
+    layer.zero_grad()
+    (layer(x).sum() + layer(x * 2).sum()).backward()
+    assert torch.isfinite(layer.log_alpha.grad).all()
+
+
 def test_gradients_and_optimizer():
     torch.manual_seed(17)
-    layer = LiteDPPSym(2, init_log_std=0).double()
+    layer = LiteDPPSym(2).double()
     x = torch.randn(1, 2, 4, 4, dtype=torch.double, requires_grad=True)
     assert torch.autograd.gradcheck(layer, (x,))
     model = torch.nn.Sequential(layer, torch.nn.Conv2d(2, 3, 1).double())
@@ -166,7 +227,8 @@ def test_logging_training_and_checkpoint_exports():
 
 if __name__ == '__main__':
     torch.set_num_threads(2)
-    for test in (test_formula_shapes_and_limits, test_gradients_and_optimizer,
+    for test in (test_author_uniform_initialization, test_formula_shapes_and_limits,
+                 test_author_graph_forward_and_gradients, test_author_alpha_projection, test_gradients_and_optimizer,
                  test_configs_placement_and_deploy, test_logging_training_and_checkpoint_exports):
         test()
         print(f'PASS: {test.__name__}')

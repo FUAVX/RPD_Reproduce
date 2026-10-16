@@ -1,4 +1,8 @@
-"""Lite-DPPSym (Saeedan et al., CVPR 2018), 2x2 non-overlapping pooling."""
+"""Lite-DPPSym port of the authors' nngraph implementation (not the CUDA variant).
+
+Reference: visinf/dpp, commit e810bd63ed61bd7710559467bcd9a35ab9a1b028,
+visinf_package/{DPP_sym_lite,CWeightCalc,PositiveBias}.lua.
+"""
 
 import math
 
@@ -8,21 +12,23 @@ from torch import nn
 
 class LiteDPPSym(nn.Module):
     def __init__(self, channels, epsilon_squared=0.001, alpha_init=1.0,
-                 lambda_init=1.0, init_log_std=0.01):
+                 lambda_init=1.0):
         super().__init__()
         if channels < 1 or min(epsilon_squared, alpha_init, lambda_init) <= 0:
             raise ValueError('DPP channels and epsilon_squared/alpha_init/lambda_init must be positive.')
-        if init_log_std < 0:
-            raise ValueError('DPP init_log_std must be non-negative.')
         self.channels = channels
         self.epsilon_squared = float(epsilon_squared)
-        # Explicit small Gaussian perturbation in log space; controlled by run seed.
-        self.log_alpha = nn.Parameter(torch.empty(channels).normal_(math.log(alpha_init), init_log_std))
-        self.log_lambda = nn.Parameter(torch.empty(channels).normal_(math.log(lambda_init), init_log_std))
+        # Match the authors' PositiveBias.lua / CWeightCalc.lua reset():
+        # https://github.com/visinf/dpp/tree/e810bd63ed61bd7710559467bcd9a35ab9a1b028/visinf_package
+        # With default alpha_init=lambda_init=1, both log vectors are U(-1/sqrt(C), 1/sqrt(C)).
+        # This follows the released code; the paper describes Gaussian perturbations instead.
+        bound = 1.0 / math.sqrt(channels)
+        self.log_alpha = nn.Parameter(torch.empty(channels).uniform_(-bound, bound).add_(math.log(alpha_init)))
+        self.log_lambda = nn.Parameter(torch.empty(channels).uniform_(-bound, bound).add_(math.log(lambda_init)))
 
     @property
     def alpha(self):
-        return self.log_alpha.exp()
+        return self.log_alpha.clamp(max=10).exp()
 
     @property
     def exponent(self):
@@ -40,8 +46,17 @@ class LiteDPPSym(nn.Module):
         windows = x[:, :, :2*h, :2*w].reshape(b, c, h, 2, w, 2)
         windows = windows.permute(0, 1, 2, 4, 3, 5).reshape(b, c, h, w, 4)
         difference = windows - windows.mean(dim=-1, keepdim=True)
-        log_reward = (difference.square() + self.epsilon_squared).log()
+        energy = difference.square() + self.epsilon_squared
+        # DPP_sym_lite.lua divides energy by its 2x2 local average before CWeightCalc.
+        # Subtracting logs is algebraically the same normalization, including gradients.
+        log_reward = energy.log() - energy.mean(dim=-1, keepdim=True).log()
         log_reward = log_reward * (0.5 * self.exponent.view(1, c, 1, 1, 1))
+        # PositiveBias.lua projects log-alpha to <=10 before exp, while retaining
+        # the gradient at that projected value. Only mutate when projection is needed
+        # so repeated forwards below the cap do not invalidate autograd graphs.
+        with torch.no_grad():
+            if torch.any(self.log_alpha > 10):
+                self.log_alpha.clamp_(max=10)
         # logaddexp + softmax computes normalized (alpha + reward) without
         # forming large reward powers. No detached statistics enter forward.
         log_weights = torch.logaddexp(self.log_alpha.view(1, c, 1, 1, 1), log_reward)
@@ -52,7 +67,7 @@ class LiteDPPSym(nn.Module):
 def make_downsampling(channels, config=None, stage=None):
     if config is None:
         return nn.MaxPool2d(2, stride=2)
-    allowed = {'variant', 'stages', 'epsilon_squared', 'alpha_init', 'lambda_init', 'init_log_std'}
+    allowed = {'variant', 'stages', 'epsilon_squared', 'alpha_init', 'lambda_init'}
     unknown = set(config) - allowed
     if unknown:
         raise ValueError(f'Unknown downsampling settings: {sorted(unknown)}')

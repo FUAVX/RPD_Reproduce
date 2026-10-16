@@ -107,7 +107,7 @@ class DPPLoggingCallback(Callback):
                 if key.startswith('network.') and key.endswith('.log_alpha'):
                     prefix = key[:-len('.log_alpha')]
                     layers[prefix[len('network.'):]] = parameter_record(
-                        value.exp(), state[prefix + '.log_lambda'].exp())
+                        value.clamp(max=10).exp(), state[prefix + '.log_lambda'].exp())
             record = {'experiment': self.experiment_id, 'checkpoint': path,
                       'epoch': checkpoint.get('epoch'), 'global_step': checkpoint.get('global_step'),
                       'layers': layers}

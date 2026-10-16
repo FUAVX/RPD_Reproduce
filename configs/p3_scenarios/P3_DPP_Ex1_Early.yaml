@@ -26,7 +26,6 @@ backbone:
     epsilon_squared: 0.001
     alpha_init: 1.0
     lambda_init: 1.0
-    init_log_std: 0.01
 
 train:
   step_settings:
