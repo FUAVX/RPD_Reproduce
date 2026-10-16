@@ -47,7 +47,8 @@ def get_backbone(cfg: Dict) -> nn.Module:
         num_dw_branches = cfg['backbone'].get('num_dw_branches', 4)
         base_c = cfg['backbone'].get('base_c', 16)
         return RepDWNet(num_classes, deploy=deploy, use_se=use_se,
-                        num_dw_branches=num_dw_branches, base_c=base_c)
+                        num_dw_branches=num_dw_branches, base_c=base_c,
+                        downsampling=cfg['backbone'].get('downsampling'))
 
     raise ValueError('The requested backbone is not supported.')
 

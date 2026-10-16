@@ -7,6 +7,7 @@ import yaml
 import pytorch_lightning as pl
 import torch
 from torch import nn, optim
+from models.rpdnet.dpp import dpp_optimizer_groups
 import torchmetrics
 
 from models.losses import get_div_loss_weight, js_div_loss, gjs_div_loss, kl_div_loss
@@ -498,7 +499,8 @@ class SegmentationNetwork(pl.LightningModule):
         return max(float(lr_scale), 1e-6)
 
     def configure_optimizers(self) -> Tuple[List[optim.Optimizer], List[optim.lr_scheduler.LambdaLR]]:
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = optim.Adam(dpp_optimizer_groups(self, self.learning_rate, self.weight_decay),
+                               lr=self.learning_rate, weight_decay=self.weight_decay)
 
         # lambdal = lambda epoch: pow((1 - 1(epoch / self.trainer.max_epochs)), 3.0) # 1.25
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_scaling)
