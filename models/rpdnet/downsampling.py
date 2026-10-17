@@ -1,11 +1,27 @@
 """Downsampling selection without changing the existing MaxPool/DPP recipes."""
 from .dpp import make_downsampling as make_dpp_downsampling
 from .lip import BottleneckLIP
+from .aaa import AAAMaxBlurPool
 import torch
 from torch import nn
 
 
 def make_downsampling(channels, config=None, stage=None):
+    if config is not None and config.get('variant') == 'aaa_tri3':
+        allowed = {'variant', 'stages', 'filt_size', 'pad_type', 'stride', 'pad_off'}
+        if set(config) - allowed:
+            raise ValueError(f'Unknown AAA settings: {sorted(set(config)-allowed)}')
+        stages = config.get('stages')
+        if (not isinstance(stages, (list, tuple)) or any(type(s) is not int for s in stages)
+                or list(stages) not in ([1, 2], [3, 4], [1, 2, 3, 4])):
+            raise ValueError('AAA-Now placements: Early [1,2], Late [3,4], All [1,2,3,4].')
+        # Require explicit geometry even at stages that keep MaxPool.
+        expected = {'filt_size': 3, 'pad_type': 'reflect', 'stride': 2, 'pad_off': 0}
+        if any(config.get(k) != v or type(config.get(k)) is not type(v) for k, v in expected.items()):
+            raise ValueError(f'AAA requires explicit {expected}')
+        if stage not in stages:
+            return nn.MaxPool2d(2, stride=2)
+        return AAAMaxBlurPool(channels, **{k: config[k] for k in expected})
     if config is None or config.get('variant', 'maxpool') != 'lip_bottleneck':
         return make_dpp_downsampling(channels, config, stage)
     unknown = set(config) - {'variant', 'stages'}

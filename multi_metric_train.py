@@ -37,6 +37,8 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, Ea
 
 from callbacks.dpp_logging import DPPLoggingCallback
 from models.rpdnet.dpp import LiteDPPSym
+from models.rpdnet.aaa import AAAMaxBlurPool
+from callbacks.training_cost import TrainingCostCallback
 from callbacks import (ConfigCallback, PostprocessorCallback, VisualizerCallback, get_postprocessors, get_visualizers, ComputeProfilingCallback)
 from datasets import get_data_module
 from models import get_backbone, get_criterion, model_multimetrics
@@ -373,6 +375,8 @@ def main():
 
     if any(isinstance(module, LiteDPPSym) for module in network.modules()):
         all_callbacks.append(DPPLoggingCallback(args['export_dir'], cfg['experiment']['id']))
+    if any(isinstance(module, AAAMaxBlurPool) for module in network.modules()):
+        all_callbacks.append(TrainingCostCallback(args['export_dir'], cfg['experiment']['id']))
 
     # Cấu hình EarlyStopping linh hoạt (Mặc định: PaperEarlyStopping theo chuẩn bài báo IEEE TGRS 2026: 3 lần val liên tiếp có val_loss <= 0.1)
     use_early_stopping = not args['no_early_stopping']
