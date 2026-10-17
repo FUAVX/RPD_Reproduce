@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
-from models.rpdnet.dpp import make_downsampling
+from models.rpdnet.downsampling import make_downsampling
 
 
 class DoubleConv_down_repdw(nn.Module):
