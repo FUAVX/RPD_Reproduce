@@ -6,11 +6,15 @@ import tempfile
 from datetime import timedelta
 from pathlib import Path
 
+from utils.tensorboard_compat import use_tensorboard_without_tensorflow
+
+use_tensorboard_without_tensorflow()
+
 import pytorch_lightning as pl
 import torch
 import yaml
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -59,7 +63,9 @@ class TinyNetwork(pl.LightningModule):
         self.network = torch.nn.Linear(2, 1)
 
     def training_step(self, batch, batch_idx):
-        return self.network(batch[0]).square().mean()
+        loss = self.network(batch[0]).square().mean()
+        self.log('train_smoke_loss', loss, on_step=True, on_epoch=False)
+        return loss
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.parameters(), lr=0.01)
@@ -67,7 +73,7 @@ class TinyNetwork(pl.LightningModule):
 
 def run_two_process_training(directory):
     cfg = {'experiment': {'id': 'config_callback_ddp_regression'}, 'runtime_devices': 2}
-    logger = CSVLogger(str(directory), name='logs', version=0)
+    logger = TensorBoardLogger(str(directory), name='lightning_logs', version=0, default_hp_metric=False)
     checkpoint = ModelCheckpoint(dirpath=str(directory / 'checkpoints'), save_last=True)
     trainer = pl.Trainer(
         accelerator='cpu', devices=2,
@@ -76,16 +82,18 @@ def run_two_process_training(directory):
         max_epochs=1, logger=logger, callbacks=[ConfigCallback(cfg), checkpoint],
         enable_progress_bar=False, enable_model_summary=False,
         num_sanity_val_steps=0, log_every_n_steps=1)
-    # CSVLogger uses save_dir for Trainer.log_dir in Lightning 1.9.5.
-    # Do not access the collective Trainer property before DDP initialization.
-    expected_log_dir = Path(logger.save_dir)
+    # Read the logger path directly, not the collective Trainer property before setup.
+    expected_log_dir = Path(logger.log_dir)
     loader = DataLoader(TensorDataset(torch.randn(8, 2)), batch_size=2)
     trainer.fit(TinyNetwork(), loader)
     if trainer.is_global_zero:
         assert yaml.safe_load((expected_log_dir / 'configuration/config.yaml').read_text()) == cfg
         assert (directory / 'checkpoints/last.ckpt').is_file()
         assert trainer.global_step > 0
-        print('PASS: 2-process subprocess DDP completed setup, training and checkpoint saving')
+        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+        events = EventAccumulator(str(expected_log_dir)).Reload()
+        assert events.Scalars('train_smoke_loss')
+        print('PASS: 2-process DDP completed config export, real TensorBoard logging, training and checkpoint saving')
 
 
 if __name__ == '__main__':

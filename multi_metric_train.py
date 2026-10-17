@@ -25,6 +25,11 @@ with warnings.catch_warnings():
         except Exception:
             pass
 
+from utils.tensorboard_compat import use_tensorboard_without_tensorflow
+
+# Configure every DDP subprocess before TensorBoard can resolve its optional TF backend.
+use_tensorboard_without_tensorflow()
+
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -427,15 +432,12 @@ def main():
         from pytorch_lightning.strategies import DDPStrategy
         train_strategy = DDPStrategy(find_unused_parameters=False)
 
-    # Setup logger
-    try:
-        tb_logger = TensorBoardLogger(
-            save_dir=args['export_dir'],
-            name="lightning_logs",
-            default_hp_metric=False
-        )
-    except Exception:
-        tb_logger = True
+    # Keep the P2 TensorBoard output; backend selection is configured before imports.
+    tb_logger = TensorBoardLogger(
+        save_dir=args['export_dir'],
+        name="lightning_logs",
+        default_hp_metric=False
+    )
 
     # Setup precision & gradient accumulation
     raw_precision = cfg['train'].get('precision', 32)
