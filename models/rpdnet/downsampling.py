@@ -12,12 +12,12 @@ def make_downsampling(channels, config=None, stage=None):
     if unknown:
         raise ValueError(f'Unknown LIP-Now settings: {sorted(unknown)}')
     stages = config.get('stages', [])
-    if (not isinstance(stages, (list, tuple)) or len(stages) != 2
+    if (not isinstance(stages, (list, tuple)) or len(stages) not in (2, 3, 4)
             or any(type(s) is not int or s not in (1, 2, 3, 4) for s in stages)
-            or len(set(stages)) != 2):
-        raise ValueError('LIP-Now requires exactly two distinct stages from 1..4.')
-    if list(stages) not in ([1, 2], [3, 4], [2, 3]):
-        raise ValueError('LIP-Now supports Early [1,2], Late [3,4], Middle [2,3].')
+            or len(set(stages)) != len(stages)):
+        raise ValueError('LIP requires two, three or four distinct stages from 1..4.')
+    if list(stages) not in ([1, 2], [3, 4], [2, 3], [1, 2, 3], [1, 2, 3, 4]):
+        raise ValueError('LIP supports Early [1,2], Late [3,4], Middle [2,3], First3 [1,2,3], All [1,2,3,4].')
     if stage not in stages:
         return nn.MaxPool2d(2, stride=2)
     # get_backbone constructs the network on CPU before moving it to its device.

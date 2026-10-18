@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic FP32 Control vs LIP-Early microbenchmark; one GPU per process.
+"""Synthetic FP32 Control vs selected LIP microbenchmark; one GPU per process.
 
 This measures model compute, not data loading or two-GPU DDP throughput.
 python scripts/benchmark_lip.py --device cuda --output-dir RUN/benchmark
@@ -111,8 +111,12 @@ def main():
     inherited = copy.deepcopy(lip)
     ds = inherited['backbone'].pop('downsampling')
     inherited['experiment'] = control['experiment']
-    if inherited != control or ds != {'variant': 'lip_bottleneck', 'stages': [1, 2]}:
-        raise ValueError('Benchmark requires the unchanged P2 recipe and LIP-Early.')
+    placements = {(1, 2): 'early', (3, 4): 'late', (2, 3): 'middle',
+                  (1, 2, 3): 'first3', (1, 2, 3, 4): 'all'}
+    placement = placements.get(tuple(ds.get('stages', [])))
+    if (inherited != control or placement is None
+            or ds != {'variant': 'lip_bottleneck', 'stages': list(ds.get('stages', []))}):
+        raise ValueError('Benchmark requires the unchanged P2 recipe and a supported LIP placement.')
     if torch.device(args.device).type == 'cuda' and not torch.cuda.is_available():
         raise RuntimeError('CUDA requested but unavailable; choose --device cpu explicitly for a smoke test.')
     output = Path(args.output_dir)
@@ -122,9 +126,9 @@ def main():
                              if torch.device(args.device).type == 'cuda' else 'CPU',
               'scope': 'synthetic single-device pre-deploy graph, no dataloader/DDP overhead',
               'mac_scope': 'Conv2d only; excludes IN, gating, aggregation, comparisons and backward',
-              'results': {}, 'status': 'running'}
+              'placement': placement, 'stages': ds['stages'], 'results': {}, 'status': 'running'}
     try:
-        for name, cfg in [('control', control), ('lip_early', lip)]:
+        for name, cfg in [('control', control), ('lip_'+placement, lip)]:
             report['results'][name] = benchmark(cfg, args)
             gc.collect()
             if torch.cuda.is_available():
@@ -136,7 +140,7 @@ def main():
         raise
     finally:
         (output / 'benchmark.json').write_text(json.dumps(report, indent=2, allow_nan=False))
-    lines = ['# Control vs LIP-Early microbenchmark', '',
+    lines = ['# Control vs selected LIP microbenchmark', '',
              f"Device: {report['device_name']}; FP32; batch={args.batch_size}; size={args.size}.", '',
              'Synthetic single-device measurement; excludes data loading and DDP.', '',
              '| Model | Params | Conv MAC/image | Inference ms | Train iteration ms | Train peak MiB |',

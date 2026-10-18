@@ -30,7 +30,8 @@ from scripts.analyze_lip import load_checkpoint, window_view
 ROOT = Path(__file__).resolve().parent
 BASE = ROOT / 'configs/p2_scenarios/P2_Ex7_RepDWNet_WDice-Loss.yaml'
 SCENARIOS = [(1, 'Early', [1, 2], 1504), (2, 'Late', [3, 4], 22336),
-             (3, 'Middle', [2, 3], 5728)]
+             (3, 'Middle', [2, 3], 5728), (4, 'First3', [1, 2, 3], 6048),
+             (5, 'All', [1, 2, 3, 4], 23840)]
 
 
 class SyntheticSegmentation(Dataset):
@@ -206,11 +207,11 @@ class LIPTests(unittest.TestCase):
             with torch.no_grad():
                 torch.testing.assert_close(restored(x), y, rtol=0, atol=0)
                 torch.testing.assert_close(deployed(x), y, rtol=1e-4, atol=1e-4)
-            self.assertEqual(sum(isinstance(m, BottleneckLIP) for m in deployed.modules()), 2)
+            self.assertEqual(sum(isinstance(m, BottleneckLIP) for m in deployed.modules()), len(stages))
 
     def test_config_rejections(self):
         for cfg in [dict(variant='lip_bottleneck', stages=stages) for stages in
-                    [[], [1], [1, 1], [1, 5], [1, 2, 3], [1, 3], [True, 2]]]:
+                    [[], [1], [1, 1], [1, 5], [1, 2, 4], [1, 3], [True, 2], [1, 2, 3, 3], [4, 3, 2, 1]]]:
             with self.assertRaises(ValueError):
                 make_downsampling(16, cfg, 1)
         with self.assertRaises(ValueError):
@@ -230,24 +231,28 @@ class LIPTests(unittest.TestCase):
         self.assertEqual(namespace['GIT_REF'], 'f/down-lip')
         self.assertEqual(namespace['DEVICES'], 2)
         self.assertEqual(namespace['EXPERIMENTS']['ex3'], ('P3_LIP_Ex3_Middle', [2, 3]))
+        self.assertEqual(namespace['EXPERIMENTS']['ex4'], ('P3_LIP_Ex4_First3', [1, 2, 3]))
+        self.assertEqual(namespace['EXPERIMENTS']['ex5'], ('P3_LIP_Ex5_All', [1, 2, 3, 4]))
         for _, (scenario, stages) in namespace['EXPERIMENTS'].items():
             cfg = yaml.safe_load((ROOT / 'configs/p3_scenarios' / (scenario+'.yaml')).read_text())
             self.assertEqual(cfg['backbone']['downsampling']['stages'], stages)
         launch = ''.join(notebook['cells'][5]['source'])
         self.assertIn("'--devices', str(DEVICES)", launch)
         self.assertIn('scripts/benchmark_lip.py', launch)
+        self.assertIn("'--lip-config', str(scenario_path)", launch)
         trainer_source = (ROOT / 'multi_metric_train.py').read_text()
         self.assertIn("target_max_epochs=cfg['train']['max_epoch']", trainer_source)
         self.assertIn("val_interval=cfg['val']['check_val_every_n_epoch']", trainer_source)
 
     def test_actual_trainer_and_resume(self):
-        cfg = ROOT / 'configs/p3_scenarios/P3_LIP_Ex1_Early.yaml'
-        with tempfile.TemporaryDirectory() as output:
-            trainer_smoke(cfg, output)
-            trainer_smoke(cfg, output, resume=True)
-            state = torch.load(Path(output) / 'checkpoints/last.ckpt', weights_only=False)
-            self.assertEqual(state['epoch'], 1)
-            self.assertEqual(state['global_step'], 4)
+        for scenario in ['P3_LIP_Ex1_Early', 'P3_LIP_Ex4_First3', 'P3_LIP_Ex5_All']:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as output:
+                cfg = ROOT / 'configs/p3_scenarios' / (scenario + '.yaml')
+                trainer_smoke(cfg, output)
+                trainer_smoke(cfg, output, resume=True)
+                state = torch.load(Path(output) / 'checkpoints/last.ckpt', weights_only=False)
+                self.assertEqual(state['epoch'], 1)
+                self.assertEqual(state['global_step'], 4)
 
 
 if __name__ == '__main__':
