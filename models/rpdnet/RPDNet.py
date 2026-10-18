@@ -57,6 +57,8 @@ class RepConvbn(nn.Module):
         return eq_k, eq_b
 
     def switch_to_deploy(self):
+        if hasattr(self, 'cba_rep'):
+            return
         eq_k, eq_b = self.get_equivalent_kernel_bias()
         self.cba_rep = nn.Conv2d(in_channels=self.cba_ori.conv.in_channels,
                                  out_channels=self.cba_ori.conv.out_channels,

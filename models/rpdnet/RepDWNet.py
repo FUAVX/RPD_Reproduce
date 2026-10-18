@@ -133,3 +133,11 @@ class RepDWNet(nn.Module):
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         return self.out_conv(x)
+
+    def switch_to_deploy(self):
+        if getattr(self, 'deploy', False):
+            return
+        for m in self.modules():
+            if hasattr(m, 'switch_to_deploy') and m is not self:
+                m.switch_to_deploy()
+        self.deploy = True
