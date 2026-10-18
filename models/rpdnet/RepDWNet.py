@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
+from models.rpdnet.deep_supervision import AuxiliaryHead, TAP_CHANNELS, validate_deep_supervision
+from copy import deepcopy
 
 
 class DoubleConv_down_repdw(nn.Module):
@@ -96,7 +98,8 @@ class RepDWNet(nn.Module):
                  base_c: int = 16,
                  deploy: bool = False,
                  use_se: bool = False,
-                 num_dw_branches: int = 4):
+                 num_dw_branches: int = 4,
+                 deep_supervision=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -121,15 +124,42 @@ class RepDWNet(nn.Module):
 
         # Head: 1x1 Conv
         self.out_conv = OutConv(base_c, num_classes)
+        self.deep_supervision = validate_deep_supervision(deep_supervision)
+        self.aux_head = None
+        if self.deep_supervision is not None:
+            if base_c != 16 or not bilinear or num_classes != 3 or deploy:
+                raise ValueError('DeepSup-Now requires base_c16, bilinear=True, 3 classes, pre-deploy')
+            # Preserve P2 host initialization and the following RNG stream. No new seed.
+            with torch.random.fork_rng(devices=[]):
+                self.aux_head = AuxiliaryHead(TAP_CHANNELS[self.deep_supervision['tap']], num_classes)
 
-    def forward(self, x):
+    def forward(self, x, return_aux=False, target_size=None):
+        if return_aux and (self.aux_head is None or not self.training):
+            raise ValueError('Auxiliary logits require an enabled head in training mode')
         x1 = self.in_conv(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
+        tap = self.deep_supervision['tap'] if return_aux else None
+        tapped = {'x3': x3, 'x4': x4, 'x5': x5}.get(tap)
         x = self.up1(x5, x4)
+        if tap == 'x6': tapped = x
         x = self.up2(x, x3)
+        if tap == 'x7': tapped = x
         x = self.up3(x, x2)
         x = self.up4(x, x1)
-        return self.out_conv(x)
+        main = self.out_conv(x)
+        if not return_aux:
+            return main
+        aux = self.aux_head(tapped)
+        aux = F.interpolate(aux, size=target_size or main.shape[-2:],
+                            mode='bilinear', align_corners=True)
+        return {'main': main, 'aux': aux}
+
+    def inference_model(self):
+        """Copy the learned main graph with no auxiliary module/weights or fusion."""
+        model = deepcopy(self)
+        model.aux_head = None
+        model.deep_supervision = None
+        return model.eval()

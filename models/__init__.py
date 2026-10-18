@@ -15,6 +15,8 @@ from .rpdnet.RPD_ops import *
 
 
 def get_backbone(cfg: Dict) -> nn.Module:
+    if cfg['backbone'].get('deep_supervision') is not None and cfg['backbone']['name'] != 'RepDWNet':
+        raise ValueError('DeepSup-Now supports RepDWNet only')
     num_classes = cfg['backbone']['num_classes']
     pretrained = cfg['backbone']['pretrained']
 
@@ -47,7 +49,8 @@ def get_backbone(cfg: Dict) -> nn.Module:
         num_dw_branches = cfg['backbone'].get('num_dw_branches', 4)
         base_c = cfg['backbone'].get('base_c', 16)
         return RepDWNet(num_classes, deploy=deploy, use_se=use_se,
-                        num_dw_branches=num_dw_branches, base_c=base_c)
+                        num_dw_branches=num_dw_branches, base_c=base_c,
+                        deep_supervision=cfg['backbone'].get('deep_supervision'))
 
     raise ValueError('The requested backbone is not supported.')
 
