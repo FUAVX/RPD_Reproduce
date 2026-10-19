@@ -13,8 +13,9 @@ class ConfigCallback(Callback):
 
     def setup(self, trainer, pl_module, stage=None) -> None:
         export_dir = os.path.join(trainer.log_dir, 'configuration')
-        if not os.path.exists(export_dir):
-            os.makedirs(export_dir)
+        if not getattr(trainer, 'is_global_zero', True):
+            return
+        os.makedirs(export_dir, exist_ok=True)
 
         fpath = os.path.join(export_dir, 'config.yaml')
         with open(fpath, 'w') as ostream:

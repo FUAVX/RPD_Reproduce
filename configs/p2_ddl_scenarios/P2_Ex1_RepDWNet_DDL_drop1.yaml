@@ -37,9 +37,9 @@ train:
   scheduler: 'cosine'
   warmup_epochs: 5
   weight_decay: 2.0e-04
-  batch_size: 4
+  batch_size: 2
   precision: 32
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 2
   shuffle: true
   
   early_stopping:
@@ -82,7 +82,7 @@ val:
     - regular
   devices: 1
   num_nodes: 1
-  batch_size: 4
+  batch_size: 2
   check_val_every_n_epoch: 5
   vis_val_every_x_epochs: 4096
   postprocess_val_every_x_epochs: 4096

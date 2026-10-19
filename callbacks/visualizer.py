@@ -77,8 +77,7 @@ class SemanticMapVisualizer(BasicVisualizer):
 
     def save_visualize_batch(self, path_to_dir: str, outputs: Dict[str, Any], batch: Dict[str, Any]) -> None:
         path_to_dir = os.path.join(path_to_dir, 'semantic_maps')
-        if not os.path.exists(path_to_dir):
-            os.makedirs(path_to_dir)
+        os.makedirs(path_to_dir, exist_ok=True)
 
         with torch.no_grad():
             logits = outputs['logits']
@@ -107,8 +106,7 @@ class SemanticOverlayVisualizer(BasicVisualizer):
 
     def save_visualize_batch(self, path_to_dir: str, outputs: Dict[str, Any], batch: Dict[str, Any]) -> None:
         path_to_dir = os.path.join(path_to_dir, 'semantic_overlays')
-        if not os.path.exists(path_to_dir):
-            os.makedirs(path_to_dir)
+        os.makedirs(path_to_dir, exist_ok=True)
 
         with torch.no_grad():
             imgs = batch['input_image_before_norm']
@@ -142,8 +140,7 @@ class GroundTruthVisualizer(BasicVisualizer):
 
     def save_visualize_batch(self, path_to_dir: str, outputs: Dict[str, Any], batch: Dict[str, Any]) -> None:
         path_to_dir = os.path.join(path_to_dir, 'ground_truth')
-        if not os.path.exists(path_to_dir):
-            os.makedirs(path_to_dir)
+        os.makedirs(path_to_dir, exist_ok=True)
 
         with torch.no_grad():
             annos = batch['anno']
@@ -170,8 +167,7 @@ class SemanticOverlayCorrectIncorrectVisualizer(BasicVisualizer):
 
     def save_visualize_batch(self, path_to_dir: str, outputs: Dict[str, Any], batch: Dict[str, Any]) -> None:
         path_to_dir = os.path.join(path_to_dir, 'semantic_overlays_correct_incorrect')
-        if not os.path.exists(path_to_dir):
-            os.makedirs(path_to_dir)
+        os.makedirs(path_to_dir, exist_ok=True)
 
         with torch.no_grad():
             imgs = batch['input_image_before_norm']
