@@ -240,7 +240,7 @@ class PDCModule(pl.LightningDataModule):
         n_workers: int = self.cfg['data']['num_workers']
 
         loader = DataLoader(self.val_ds, batch_size=batch_size, num_workers=n_workers, shuffle=False, drop_last=True,
-                            pin_memory=True, persistent_workers=(n_workers > 0))
+                            pin_memory=True, persistent_workers=False)
 
         return loader
 

@@ -415,12 +415,21 @@ def main():
     # Đảm bảo export_dir tồn tại
     os.makedirs(args['export_dir'], exist_ok=True)
 
-    # Setup strategy
+    # Setup strategy & accelerator for robust Multi-GPU (DDP + NCCL)
     train_devices = cfg['train'].get('devices', 'auto')
     train_strategy = cfg['train'].get('strategy', 'auto')
-    if train_strategy == 'auto' and torch.cuda.is_available() and torch.cuda.device_count() > 1:
+    train_accelerator = cfg['train'].get('accelerator', 'gpu' if torch.cuda.is_available() else 'cpu')
+
+    is_multi_gpu = (
+        (isinstance(train_devices, int) and train_devices > 1) or
+        (isinstance(train_devices, (list, tuple)) and len(train_devices) > 1) or
+        os.environ.get('LOCAL_RANK') is not None or
+        (torch.cuda.is_available() and torch.cuda.device_count() > 1)
+    )
+
+    if train_strategy == 'auto' and torch.cuda.is_available() and is_multi_gpu:
         from pytorch_lightning.strategies import DDPStrategy
-        train_strategy = DDPStrategy(find_unused_parameters=False)
+        train_strategy = DDPStrategy(find_unused_parameters=False, process_group_backend='nccl')
 
     # Setup logger
     try:
@@ -446,7 +455,7 @@ def main():
 
     # Setup trainer
     trainer = Trainer(
-        accelerator=cfg['train'].get('accelerator', 'auto'),
+        accelerator=train_accelerator,
         devices=train_devices,
         strategy=train_strategy,
         benchmark=cfg['train'].get('benchmark', True),
