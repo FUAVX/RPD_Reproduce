@@ -100,8 +100,15 @@ if __name__=='__main__':
     parser.add_argument('--mode',choices=['training','inference'],required=True);parser.add_argument('--device',choices=['cuda','cpu'],default='cuda')
     parser.add_argument('--size',type=int,default=768);parser.add_argument('--batch-size',type=int)
     parser.add_argument('--warmup',type=int);parser.add_argument('--iterations',type=int)
-    parser.add_argument('--experiments',nargs='+',choices=list(SCENARIOS),default=list(SCENARIOS))
+    parser.add_argument('--campaign',choices=['deepsup','deepdown'],default='deepsup')
+    parser.add_argument('--experiments',nargs='+')
     parser.add_argument('--output-dir',required=True);args=parser.parse_args()
+    scenarios = SCENARIOS if args.campaign=='deepsup' else {'control':'DeepDown_Control','ex0':'DeepDown_Ex0'}
+    config_dir = 'configs/p3_deepsup' if args.campaign=='deepsup' else 'configs/p35_deepdown'
+    args.experiments = args.experiments or list(scenarios)
+    if any(key not in scenarios for key in args.experiments) or 'control' not in args.experiments:
+        parser.error('Select valid campaign modes and include control for relative timing')
+    args.experiments = ['control'] + [k for k in dict.fromkeys(args.experiments) if k != 'control']
     args.batch_size=args.batch_size or (4 if args.mode=='training' else 1)
     args.warmup=args.warmup if args.warmup is not None else (20 if args.mode=='training' else 30)
     args.iterations=args.iterations if args.iterations is not None else (100 if args.mode=='training' else 200)
@@ -118,7 +125,7 @@ if __name__=='__main__':
     try:
         base=Path(__file__).resolve().parents[1]
         for key in args.experiments:
-            cfg=yaml.safe_load((base/'configs/p3_deepsup'/f'{SCENARIOS[key]}.yaml').read_text())
+            cfg=yaml.safe_load((base/config_dir/f'{scenarios[key]}.yaml').read_text())
             report['results'][key]=measure(cfg,args,device,world)
             report['results'][key]['latency_delta_pct_vs_control']=100*(report['results'][key]['mean_ms']/report['results']['control']['mean_ms']-1) if 'control' in report['results'] else None
         report['status']='completed'

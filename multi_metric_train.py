@@ -28,11 +28,20 @@ with warnings.catch_warnings():
 from utils.tensorboard_compat import use_tensorboard_without_tensorflow
 use_tensorboard_without_tensorflow()
 
+from utils.tensorboard_compat import use_tensorboard_without_tensorflow
+
+# Configure every DDP subprocess before TensorBoard can resolve its optional TF backend.
+use_tensorboard_without_tensorflow()
+
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, EarlyStopping, Callback
 
+from callbacks.dpp_logging import DPPLoggingCallback
+from models.rpdnet.dpp import LiteDPPSym
+from models.rpdnet.aaa import AAAMaxBlurPool
+from callbacks.training_cost import TrainingCostCallback
 from callbacks import (ConfigCallback, PostprocessorCallback, VisualizerCallback, get_postprocessors, get_visualizers, ComputeProfilingCallback)
 from datasets import get_data_module
 from models import get_backbone, get_criterion, model_multimetrics
@@ -374,6 +383,12 @@ def main():
         config_callback,
     ]
 
+    if any(isinstance(module, LiteDPPSym) for module in network.modules()):
+        all_callbacks.append(DPPLoggingCallback(args['export_dir'], cfg['experiment']['id']))
+    if (any(isinstance(module, AAAMaxBlurPool) for module in network.modules())
+            and not cfg['experiment']['id'].startswith(('P3_DeepSup_', 'DeepDown-'))):
+        all_callbacks.append(TrainingCostCallback(args['export_dir'], cfg['experiment']['id']))
+
     # Cấu hình EarlyStopping linh hoạt (Mặc định: PaperEarlyStopping theo chuẩn bài báo IEEE TGRS 2026: 3 lần val liên tiếp có val_loss <= 0.1)
     use_early_stopping = not args['no_early_stopping']
     es_cfg = cfg['train'].get('early_stopping', {})
@@ -432,15 +447,12 @@ def main():
         from pytorch_lightning.strategies import DDPStrategy
         train_strategy = DDPStrategy(find_unused_parameters=False)
 
-    # Setup logger
-    try:
-        tb_logger = TensorBoardLogger(
-            save_dir=args['export_dir'],
-            name="lightning_logs",
-            default_hp_metric=False
-        )
-    except Exception:
-        tb_logger = True
+    # Keep the P2 TensorBoard output; backend selection is configured before imports.
+    tb_logger = TensorBoardLogger(
+        save_dir=args['export_dir'],
+        name="lightning_logs",
+        default_hp_metric=False
+    )
 
     # Setup precision & gradient accumulation
     raw_precision = cfg['train'].get('precision', 32)
@@ -454,7 +466,7 @@ def main():
 
     train_accum_grad = int(cfg['train'].get('accumulate_grad_batches', 1))
 
-    if cfg['experiment']['id'].startswith('P3_DeepSup_'):
+    if cfg['experiment']['id'].startswith(('P3_DeepSup_', 'DeepDown-')):
         from callbacks.deepsup_cost import DeepSupCostCallback
         all_callbacks.append(DeepSupCostCallback(args['export_dir']))
 

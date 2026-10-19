@@ -41,6 +41,8 @@ def audit_run(output_dir, expected_epochs=100, val_interval=5):
             raise ValueError(f'Checkpoint {monitor} differs from synchronized history')
         if selected.get('deep_supervision') != state.get('deep_supervision'):
             raise ValueError('Selected checkpoint tap/settings differ from campaign')
+        if selected.get('downsampling') != state.get('downsampling'):
+            raise ValueError('Selected checkpoint downsampling differs from campaign')
         if normalize_history(selected['val_history']) != [r for r in history if r['epoch'] <= epoch]:
             raise ValueError('Selected checkpoint contains inconsistent validation history')
         policies.append({'monitor': monitor, 'epoch': epoch, 'score': score, 'checkpoint': path.name})

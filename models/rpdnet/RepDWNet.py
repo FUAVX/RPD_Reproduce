@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
+from models.rpdnet.downsampling import make_downsampling
 from models.rpdnet.deep_supervision import AuxiliaryHead, TAP_CHANNELS, validate_deep_supervision
 from copy import deepcopy
 
@@ -50,9 +51,10 @@ class DoubleConv_down_repdw(nn.Module):
 
 
 class Down_repdw(nn.Sequential):
-    def __init__(self, in_channels, out_channels, deploy=False, use_se=False, num_dw_branches=4):
+    def __init__(self, in_channels, out_channels, deploy=False, use_se=False, num_dw_branches=4,
+                 downsampling=None, stage=None):
         super().__init__(
-            nn.MaxPool2d(2, stride=2),
+            make_downsampling(in_channels, downsampling, stage),
             DoubleConv_down_repdw(in_channels, out_channels, deploy=deploy,
                                   use_se=use_se, num_dw_branches=num_dw_branches)
         )
@@ -99,22 +101,24 @@ class RepDWNet(nn.Module):
                  deploy: bool = False,
                  use_se: bool = False,
                  num_dw_branches: int = 4,
-                 deep_supervision=None):
+                 deep_supervision=None,
+                 downsampling=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
+        self.downsampling = deepcopy(downsampling)
 
         # Stem: 2x RepConvbn 3x3 (giữ nguyên gốc)
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
 
         # Encoder: 4 stages
-        self.down1 = Down_repdw(base_c, base_c * 2, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-        self.down2 = Down_repdw(base_c * 2, base_c * 4, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-        self.down3 = Down_repdw(base_c * 4, base_c * 8, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+        self.down1 = Down_repdw(base_c, base_c * 2, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=1)
+        self.down2 = Down_repdw(base_c * 2, base_c * 4, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=2)
+        self.down3 = Down_repdw(base_c * 4, base_c * 8, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=3)
         factor = 2 if bilinear else 1
-        self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+        self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=4)
 
         # Decoder: 4 stages
         self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)

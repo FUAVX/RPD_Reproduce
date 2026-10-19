@@ -7,6 +7,7 @@ import yaml
 import pytorch_lightning as pl
 import torch
 from torch import nn, optim
+from models.rpdnet.dpp import dpp_optimizer_groups
 import torchmetrics
 
 from models.losses import get_div_loss_weight, js_div_loss, gjs_div_loss, kl_div_loss
@@ -153,12 +154,15 @@ class SegmentationNetwork(pl.LightningModule):
     def on_save_checkpoint(self, checkpoint):
         from copy import deepcopy
         checkpoint['deep_supervision'] = deepcopy(getattr(self.network, 'deep_supervision', None))
+        checkpoint['downsampling'] = deepcopy(getattr(self.network, 'downsampling', None))
         checkpoint['val_history'] = deepcopy(normalize_history(self.val_history))
 
     def on_load_checkpoint(self, checkpoint):
         expected = getattr(self.network, 'deep_supervision', None)
         if checkpoint.get('deep_supervision') != expected:
             raise ValueError('Checkpoint DeepSup configuration does not match the selected tap/settings')
+        if checkpoint.get('downsampling') != getattr(self.network, 'downsampling', None):
+            raise ValueError('Checkpoint downsampling configuration does not match the selected settings')
         if 'val_history' not in checkpoint:
             raise ValueError('Legacy checkpoint has no val_history: resume requires a separate manual audit; '
                              'history is never reconstructed from CSV')
@@ -530,7 +534,8 @@ class SegmentationNetwork(pl.LightningModule):
         return max(float(lr_scale), 1e-6)
 
     def configure_optimizers(self) -> Tuple[List[optim.Optimizer], List[optim.lr_scheduler.LambdaLR]]:
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = optim.Adam(dpp_optimizer_groups(self, self.learning_rate, self.weight_decay),
+                               lr=self.learning_rate, weight_decay=self.weight_decay)
 
         # lambdal = lambda epoch: pow((1 - 1(epoch / self.trainer.max_epochs)), 3.0) # 1.25
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_scaling)
