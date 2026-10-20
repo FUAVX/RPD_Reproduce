@@ -3,6 +3,8 @@ from torch import nn
 
 from .deeplabv3plus.modeling import deeplabv3plus_resnet50
 from .rpdnet import RPDNet, RepDWNet
+from .rpdnet.RepDWNetH8 import RepDWNetH8
+from .rpdnet.RepDWNetH4H8Fusion import RepDWNetH4H8Fusion
 from .erf import ERFNetModel
 from .segnext import SegNext
 from .segformer import SegFormer
@@ -17,6 +19,22 @@ from .rpdnet.RPD_ops import *
 def get_backbone(cfg: Dict) -> nn.Module:
     num_classes = cfg['backbone']['num_classes']
     pretrained = cfg['backbone']['pretrained']
+
+    if cfg['backbone']['name'] in ('RepDWNetH8', 'RepDWNetH4H8Fusion'):
+        backbone = cfg['backbone']
+        if pretrained:
+            raise ValueError('Phase 3 variants require pretrained: false for fresh ablations.')
+        options = dict(num_classes=num_classes,
+                       base_c=int(backbone.get('base_c', 16)),
+                       deploy=bool(backbone.get('deploy', False)),
+                       use_se=bool(backbone.get('use_se', False)),
+                       num_dw_branches=int(backbone.get('num_dw_branches', 4)))
+        if backbone['name'] == 'RepDWNetH8':
+            return RepDWNetH8(**options)
+        return RepDWNetH4H8Fusion(
+            **options, high_channels=int(backbone.get('high_channels', 32)),
+            exchange_units=int(backbone.get('exchange_units', 2)),
+            exchange_mode=backbone.get('exchange_mode', 'repeated'))
 
     if cfg['backbone']['name'] == 'deeplabv3plus_resnet50':
         return deeplabv3plus_resnet50(output_stride=16, num_classes=num_classes, pretrained_backbone=pretrained)
