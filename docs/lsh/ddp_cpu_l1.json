@@ -1,0 +1,42 @@
+{
+  "author": "PhuongTU",
+  "passed": true,
+  "model": "RepDWNetLSHL1",
+  "device": "cpu",
+  "backend": "gloo",
+  "world_size": 2,
+  "find_unused_parameters": false,
+  "synthetic_shape": [
+    2,
+    3,
+    64,
+    64
+  ],
+  "ranks": [
+    {
+      "rank": 0,
+      "steps": 2,
+      "loss": [
+        8.59194564819336,
+        8.484330177307129
+      ],
+      "parameter_sha256": "b6df1ff1168df78d5d18b4a096424975f6261c55804153623c352b83154e72b8",
+      "all_parameters_have_finite_gradients": true,
+      "tensorboard_backend": "tensorboard.compat.tensorflow_stub",
+      "startup_hook_inherited": true
+    },
+    {
+      "rank": 1,
+      "steps": 2,
+      "loss": [
+        8.629081726074219,
+        8.580110549926758
+      ],
+      "parameter_sha256": "b6df1ff1168df78d5d18b4a096424975f6261c55804153623c352b83154e72b8",
+      "all_parameters_have_finite_gradients": true,
+      "tensorboard_backend": "tensorboard.compat.tensorflow_stub",
+      "startup_hook_inherited": true
+    }
+  ],
+  "gpu_full_batch_or_dataset_test": false
+}

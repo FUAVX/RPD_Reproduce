@@ -1,0 +1,19 @@
+{
+  "author": "PhuongTU",
+  "checks": [
+    {
+      "model": "L1",
+      "passed": true,
+      "checks": "prepare/provenance/config/hook/source guards, real logger IO, CPU GPU-gate failure, resume hashes/scenario, mocked train CLI and artifact packaging"
+    },
+    {
+      "model": "L2",
+      "passed": true,
+      "checks": "prepare/provenance/config/hook/source guards, real logger IO, CPU GPU-gate failure, resume hashes/scenario, mocked train CLI and artifact packaging"
+    }
+  ],
+  "real_training_or_real_dataset_executed": false,
+  "real_logger_executed": true,
+  "training_process_mocked": true,
+  "fixture_source": "temporary minimal Git repository"
+}

@@ -1,0 +1,27 @@
+{
+  "author": "PhuongTU",
+  "reports": [
+    {
+      "notebook": "kaggle_train_p3_lsh_l1_wdice.ipynb",
+      "source_commit": "e39b25018f27bf107a406d90270245ee80b0b233",
+      "passed": true,
+      "setup_real_git_clone": "GitHub remote",
+      "logger_event_io": "passed",
+      "gpu_preflight_gate": "blocked as expected on CPU; no GPU pass claimed",
+      "training_gate": "blocked as expected",
+      "artifact_packaging": "passed"
+    },
+    {
+      "notebook": "kaggle_train_p3_lsh_l2_wdice.ipynb",
+      "source_commit": "e39b25018f27bf107a406d90270245ee80b0b233",
+      "passed": true,
+      "setup_real_git_clone": "GitHub remote",
+      "logger_event_io": "passed",
+      "gpu_preflight_gate": "blocked as expected on CPU; no GPU pass claimed",
+      "training_gate": "blocked as expected",
+      "artifact_packaging": "passed"
+    }
+  ],
+  "schema_validation": "nbformat checked separately in base Python",
+  "actual_phenobench_gpu_or_training_executed": false
+}

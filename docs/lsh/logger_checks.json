@@ -1,0 +1,16 @@
+{
+  "author": "PhuongTU",
+  "passed": true,
+  "tensorboard_backend": "tensorboard.compat.tensorflow_stub",
+  "numpy": "1.26.4",
+  "torch": "2.7.1+cpu",
+  "scalar_and_grouped_event_write_read": "passed",
+  "lightning_logger": "passed",
+  "descendant_inheritance": {
+    "flag": "1",
+    "hook": true,
+    "backend": "tensorboard.compat.tensorflow_stub"
+  },
+  "real_tensorflow_imported": false,
+  "jax_imported": false
+}

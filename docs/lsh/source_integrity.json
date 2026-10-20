@@ -1,0 +1,23 @@
+{
+  "author": "PhuongTU",
+  "baseline_commit": "d77d518b8f650443216070fa76742db76e41b8ac",
+  "unchanged_baseline_files": [
+    "models/rpdnet/RepDWNet.py",
+    "models/rpdnet/RPDNet.py",
+    "models/rpdnet/RPD_Module.py",
+    "models/rpdnet/rep_dw.py",
+    "models/losses.py",
+    "models/model_multimetrics.py",
+    "datasets/pdc.py",
+    "multi_metric_train.py",
+    "configs/p2_scenarios/P2_Ex7_RepDWNet_WDice-Loss.yaml",
+    "test_wdice.py"
+  ],
+  "notf_hook_matches_handoff": true,
+  "notf_hook_sha256": "b14924b55b2fc80884d54df5970a306d6d53217b86e34e61d47b94125086f90d",
+  "handoff_and_plan_files_sha256": {
+    "07_Ban_giao_Task6_LSH_PhuongTU.md": "a61867605cc0a6337bc1ee865b31003c09cc90a938f14267022a6d3ae10a426d",
+    "09_Plan_L1_Head_hai_scale_PhuongTU.md": "f13f0737622aa98ff1a0c4edf88b6c5bcaeea0a3d9aedafd8659ad3bfa03f962",
+    "10_Plan_L2_Head_ba_scale_PhuongTU.md": "df0962a3359d4272966ca8999c7ffa7d9f8c477ea598eff331be9231d3a753ad"
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "author": "PhuongTU",
+  "mode": "normal-import",
+  "device": "cpu",
+  "torch": "2.7.1+cpu",
+  "reports": [
+    {
+      "model": "RepDWNetLSHL1",
+      "params": 189878,
+      "head_params": 102,
+      "shapes": [
+        {
+          "input": [
+            2,
+            3,
+            64,
+            64
+          ],
+          "output": [
+            2,
+            3,
+            64,
+            64
+          ],
+          "decoder_features": [
+            [
+              2,
+              16,
+              64,
+              64
+            ],
+            [
+              2,
+              16,
+              32,
+              32
+            ],
+            [
+              2,
+              32,
+              16,
+              16
+            ]
+          ],
+          "deepest_shape": [
+            2,
+            128,
+            4,
+            4
+          ]
+        },
+        {
+          "input": [
+            2,
+            3,
+            65,
+            79
+          ],
+          "output": [
+            2,
+            3,
+            65,
+            79
+          ],
+          "decoder_features": [
+            [
+              2,
+              16,
+              65,
+              79
+            ],
+            [
+              2,
+              16,
+              32,
+              39
+            ],
+            [
+              2,
+              32,
+              16,
+              19
+            ]
+          ],
+          "deepest_shape": [
+            2,
+            128,
+            4,
+            4
+          ]
+        }
+      ],
+      "finite_loss": 8.574200630187988,
+      "all_parameters_have_finite_gradients": true,
+      "formula_and_baseline_features": "passed",
+      "deploy_max_abs_error": 0.0087890625,
+      "deploy_normalized_max_error": 9.514669400125467e-07
+    },
+    {
+      "model": "RepDWNetLSHL2",
+      "params": 189977,
+      "head_params": 201,
+      "shapes": [
+        {
+          "input": [
+            2,
+            3,
+            64,
+            64
+          ],
+          "output": [
+            2,
+            3,
+            64,
+            64
+          ],
+          "decoder_features": [
+            [
+              2,
+              16,
+              64,
+              64
+            ],
+            [
+              2,
+              16,
+              32,
+              32
+            ],
+            [
+              2,
+              32,
+              16,
+              16
+            ]
+          ],
+          "deepest_shape": [
+            2,
+            128,
+            4,
+            4
+          ]
+        },
+        {
+          "input": [
+            2,
+            3,
+            65,
+            79
+          ],
+          "output": [
+            2,
+            3,
+            65,
+            79
+          ],
+          "decoder_features": [
+            [
+              2,
+              16,
+              65,
+              79
+            ],
+            [
+              2,
+              16,
+              32,
+              39
+            ],
+            [
+              2,
+              32,
+              16,
+              19
+            ]
+          ],
+          "deepest_shape": [
+            2,
+            128,
+            4,
+            4
+          ]
+        }
+      ],
+      "finite_loss": 7.182000160217285,
+      "all_parameters_have_finite_gradients": true,
+      "formula_and_baseline_features": "passed",
+      "deploy_max_abs_error": 0.004638671875,
+      "deploy_normalized_max_error": 1.5649643039878914e-06
+    }
+  ],
+  "original_wdice_tests": [
+    "test_ignored_pixels_do_not_change_loss_or_target",
+    "test_perfect_prediction_has_near_zero_dice_term",
+    "test_wdice_formula_and_backward",
+    "test_zero_dice_weight_recovers_baseline_wce"
+  ],
+  "data_probe": {
+    "fixture": "synthetic PNGs through unchanged PDC loader",
+    "train_shape": [
+      3,
+      768,
+      768
+    ],
+    "val_shape": [
+      3,
+      65,
+      79
+    ],
+    "raw_label_remap_3_to_1_4_to_2": "passed",
+    "actual_phenobench_tested": false
+  },
+  "checkpoint_rule": {
+    "monitor": "val_weed_iou",
+    "mode": "max"
+  },
+  "long_training_run": false
+}
