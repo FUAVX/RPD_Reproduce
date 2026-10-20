@@ -3,6 +3,8 @@ from torch import nn
 
 from .deeplabv3plus.modeling import deeplabv3plus_resnet50
 from .rpdnet import RPDNet, RepDWNet
+from .rpdnet.RepDWNetLSHL1 import RepDWNetLSHL1
+from .rpdnet.RepDWNetLSHL2 import RepDWNetLSHL2
 from .rpdnet.RepDWNetH8 import RepDWNetH8
 from .rpdnet.RepDWNetH4H8Fusion import RepDWNetH4H8Fusion
 from .erf import ERFNetModel
@@ -19,6 +21,16 @@ from .rpdnet.RPD_ops import *
 def get_backbone(cfg: Dict) -> nn.Module:
     num_classes = cfg['backbone']['num_classes']
     pretrained = cfg['backbone']['pretrained']
+
+    if cfg['backbone']['name'] in ('RepDWNetLSHL1', 'RepDWNetLSHL2'):
+        backbone = cfg['backbone']
+        if pretrained:
+            raise ValueError('LSH ablations require pretrained: false.')
+        model_class = RepDWNetLSHL1 if backbone['name'] == 'RepDWNetLSHL1' else RepDWNetLSHL2
+        return model_class(num_classes=num_classes, base_c=int(backbone.get('base_c', 16)),
+                           deploy=bool(backbone.get('deploy', False)),
+                           use_se=bool(backbone.get('use_se', False)),
+                           num_dw_branches=int(backbone.get('num_dw_branches', 4)))
 
     if cfg['backbone']['name'] in ('RepDWNetH8', 'RepDWNetH4H8Fusion'):
         backbone = cfg['backbone']
