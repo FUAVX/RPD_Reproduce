@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "notebook": "kaggle_train_p3_srr_h4_h8_fusion_wdice.ipynb",
+      "source_commit": "9c9446c360ddaaff78db208c9cc3cb9b810a9b77",
+      "checks": "syntax, local Git clone/pin, recipe, provenance, dirty-source rejection, resume guards, preflight gate, mocked CLI/artifacts",
+      "status": "passed"
+    },
+    {
+      "notebook": "kaggle_train_p3_srr_h8_wdice.ipynb",
+      "source_commit": "9c9446c360ddaaff78db208c9cc3cb9b810a9b77",
+      "checks": "syntax, local Git clone/pin, recipe, provenance, dirty-source rejection, resume guards, preflight gate, mocked CLI/artifacts",
+      "status": "passed"
+    }
+  ],
+  "fixture": "empty dataset directory layout; local Git remote",
+  "pip_gpu_dataset_training_executed": false,
+  "training_command_mocked": true
+}
