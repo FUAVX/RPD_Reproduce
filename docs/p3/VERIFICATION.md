@@ -6,7 +6,7 @@ HEAD `1f39156`, no tracked/untracked changes before integration; ignored caches
 preserved. No applicable AGENTS.md was found in project/ancestor paths.
 
 Independent worktree: `/home/trandouyenphuong/RPD_Phase3_PhuongTU`,
-branch `codex/p3-srr`, based directly on `origin/f/wdice-loss` at
+branch `f/srr`, based directly on `origin/f/wdice-loss` at
 `d77d518b8f650443216070fa76742db76e41b8ac` (confirmed against GitHub after fetch).
 Runtime source commit: `9c9446c360ddaaff78db208c9cc3cb9b810a9b77`.
 Notebook/guide are a subsequent commit whose hash can be read with `git log`.

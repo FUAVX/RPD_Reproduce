@@ -2,7 +2,7 @@
 
 Hai biến thể kế thừa source đã triển khai trong bộ bàn giao ngày 20/10/2026,
 được tích hợp chọn lọc trên `f/wdice-loss` tại
-`d77d518b8f650443216070fa76742db76e41b8ac`. Branch làm việc: `codex/p3-srr`.
+`d77d518b8f650443216070fa76742db76e41b8ac`. Branch làm việc: `f/srr`.
 Không merge `main`; checkout `p2_ende` ban đầu được giữ nguyên trong worktree cũ.
 
 ## Source và launcher
@@ -20,7 +20,7 @@ Notebook PA1: [kaggle_train_p3_srr_h8_wdice.ipynb](notebook/kaggle_train_p3_srr_
 Notebook PA2: [kaggle_train_p3_srr_h4_h8_fusion_wdice.ipynb](notebook/kaggle_train_p3_srr_h4_h8_fusion_wdice.ipynb).
 
 Cả hai clone `https://github.com/FUAVX/RPD_Reproduce.git`, fetch nhánh
-`codex/p3-srr`, rồi checkout detached tại `SOURCE_COMMIT` đầy đủ 40 ký tự.
+`f/srr`, rồi checkout detached tại `SOURCE_COMMIT` đầy đủ 40 ký tự.
 Commit source: `9c9446c360ddaaff78db208c9cc3cb9b810a9b77`.
 Commit source chứa model/config/tools được tạo trước commit chứa launcher;
 notebook không cần chứa hash của chính commit của nó. Git sparse checkout bỏ
