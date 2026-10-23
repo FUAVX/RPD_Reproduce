@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
+from models.rpdnet.fuse_fpn import validate_fusion, AddUp, PyramidDecoder
 
 
 class DoubleConv_down_repdw(nn.Module):
@@ -96,12 +97,16 @@ class RepDWNet(nn.Module):
                  base_c: int = 16,
                  deploy: bool = False,
                  use_se: bool = False,
-                 num_dw_branches: int = 4):
+                 num_dw_branches: int = 4,
+                 fusion=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
+        self.fusion = validate_fusion(fusion)
+        if self.fusion is not None and (base_c != 16 or not bilinear or deploy or num_classes != 3):
+            raise ValueError("Fuse NOW requires base_c16, bilinear, 3 classes and unfused graph")
 
         # Stem: 2x RepConvbn 3x3 (giữ nguyên gốc)
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
@@ -112,6 +117,17 @@ class RepDWNet(nn.Module):
         self.down3 = Down_repdw(base_c * 4, base_c * 8, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
         factor = 2 if bilinear else 1
         self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+
+        if self.fusion is not None:
+            if self.fusion['variant'] == 'fpn':
+                self.fpn = PyramidDecoder(self.fusion)
+            else:
+                projected = self.fusion['variant'] == 'projected_add'
+                for stage, channels, output in [(1,128,64),(2,64,32),(3,32,16),(4,16,16)]:
+                    setattr(self, f'up{stage}', AddUp(channels, output, projected,
+                        DoubleConv_down_repdw, deploy, use_se, num_dw_branches))
+                self.out_conv = OutConv(base_c, num_classes)
+            return
 
         # Decoder: 4 stages
         self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
@@ -128,6 +144,8 @@ class RepDWNet(nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
+        if self.fusion is not None and self.fusion["variant"] == "fpn":
+            return self.fpn({2:x2, 3:x3, 4:x4, 5:x5}, x.shape[-2:])
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)

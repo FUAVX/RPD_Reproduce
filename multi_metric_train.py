@@ -25,6 +25,9 @@ with warnings.catch_warnings():
         except Exception:
             pass
 
+from utils.tensorboard_compat import use_tensorboard_without_tensorflow
+use_tensorboard_without_tensorflow()
+
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -343,8 +346,15 @@ def main():
     )
 
 
-    my_checkpoint_savers = [var_value for var_name, var_value in locals().items() if
-                            var_name.startswith('checkpoint_saver')]
+    # Save last AFTER selection callbacks so its resume state includes their
+    # current best paths/scores, including when validation runs every epoch.
+    my_checkpoint_savers = [
+        checkpoint_saver_val_mIoU,
+        checkpoint_saver_val_weed_iou,
+        checkpoint_saver_val_loss,
+        checkpoint_saver_periodic,
+        checkpoint_saver_epoch_last,
+    ]
 
     visualizer_callback = VisualizerCallback(get_visualizers(cfg),
                                              cfg['train']['vis_train_every_x_epochs'],
@@ -404,8 +414,8 @@ def main():
     if args.get('profile', False):
         profiling_cb = ComputeProfilingCallback(
             warmup_batches=args.get('profile_warmup_batches', 10),
-            target_max_epochs=4096,
-            val_interval=200,
+            target_max_epochs=cfg['train']['max_epoch'],
+            val_interval=cfg['val']['check_val_every_n_epoch'],
             output_dir=args['export_dir'],
             verbose=True
         )
@@ -444,11 +454,16 @@ def main():
 
     train_accum_grad = int(cfg['train'].get('accumulate_grad_batches', 1))
 
+    if cfg['experiment']['id'].startswith('FPN.'):
+        from callbacks.fuse_cost import FuseCostCallback
+        all_callbacks.append(FuseCostCallback(args['export_dir']))
+
     # Setup trainer
     trainer = Trainer(
         accelerator=cfg['train'].get('accelerator', 'auto'),
         devices=train_devices,
         strategy=train_strategy,
+        sync_batchnorm=False,
         benchmark=cfg['train'].get('benchmark', True),
         precision=train_precision,
         accumulate_grad_batches=train_accum_grad,
@@ -470,12 +485,13 @@ def main():
     else:
         raise RuntimeError("Can't train any model since the settings are invalid.")
 
-    # Generate validation curves and summary report automatically
-    try:
-        from utils.plot_val_curves import generate_curves_and_summary
-        generate_curves_and_summary(args['export_dir'])
-    except Exception as e:
-        print(f"[Post-Train Notice] Automatic plot generation skipped: {e}")
+    # D02: post-training validation summaries/plots are shared artifacts too.
+    if trainer.is_global_zero:
+        try:
+            from utils.plot_val_curves import generate_curves_and_summary
+            generate_curves_and_summary(args['export_dir'])
+        except Exception as e:
+            print(f"[Post-Train Notice] Automatic plot generation skipped: {e}")
 
 
 if __name__ == '__main__':
