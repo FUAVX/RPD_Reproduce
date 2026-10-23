@@ -193,7 +193,10 @@ def main():
     args = parse_args()
 
     # Setup automated file logging if not already captured by outer runner script
-    if not os.environ.get("RUNNER_CAPTURING_LOG"):
+    # Only global rank0 opens shared text log files (same D02 writer policy).
+    log_rank_zero = (int(os.environ.get('NODE_RANK', '0')) == 0 and
+                     int(os.environ.get('RANK', os.environ.get('LOCAL_RANK', '0'))) == 0)
+    if log_rank_zero and not os.environ.get("RUNNER_CAPTURING_LOG"):
         logs_dir = os.path.join(args['export_dir'], 'logs')
         os.makedirs(logs_dir, exist_ok=True)
         timestamp_str = time.strftime('%Y%m%d_%H%M%S')
