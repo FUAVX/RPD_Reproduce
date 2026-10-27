@@ -1,0 +1,25 @@
+{
+  "commit": "eee4881fdc31920efd873773e0b744df8dacbfb6",
+  "files": {
+    "models/networks_other.py": {
+      "sha256": "9fdcecf29b9767c3853200925566f8d4b447c6e64e2b4aa77ac891d459e299e0",
+      "url": "https://github.com/ozan-oktay/Attention-Gated-Networks/blob/eee4881fdc31920efd873773e0b744df8dacbfb6/models/networks_other.py"
+    },
+    "models/layers/grid_attention_layer.py": {
+      "sha256": "9a61aee094867511ca338409d57753ccf1db52dad6570a53cd85055ee449342d",
+      "url": "https://github.com/ozan-oktay/Attention-Gated-Networks/blob/eee4881fdc31920efd873773e0b744df8dacbfb6/models/layers/grid_attention_layer.py"
+    },
+    "models/networks/unet_CT_single_att_dsv_3D.py": {
+      "sha256": "361d78b865b0dc1594021964c2ecbd509843a2636427cc497e102d1146f91fc4",
+      "url": "https://github.com/ozan-oktay/Attention-Gated-Networks/blob/eee4881fdc31920efd873773e0b744df8dacbfb6/models/networks/unet_CT_single_att_dsv_3D.py"
+    },
+    "models/networks/utils.py": {
+      "sha256": "d6b151725939154d5e2eefe7ebd0e399797788c859185938f3284f1805634947",
+      "url": "https://github.com/ozan-oktay/Attention-Gated-Networks/blob/eee4881fdc31920efd873773e0b744df8dacbfb6/models/networks/utils.py"
+    },
+    "models/networks/unet_grid_attention_3D.py": {
+      "sha256": "11b11ac038e736f8fc7ae72eaa0e27033ed0e26428487fad0cac7e02afdd2658",
+      "url": "https://github.com/ozan-oktay/Attention-Gated-Networks/blob/eee4881fdc31920efd873773e0b744df8dacbfb6/models/networks/unet_grid_attention_3D.py"
+    }
+  }
+}

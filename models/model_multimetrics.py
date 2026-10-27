@@ -10,6 +10,7 @@ from torch import nn, optim
 import torchmetrics
 
 from models.losses import get_div_loss_weight, js_div_loss, gjs_div_loss, kl_div_loss
+from utils.validation_artifacts import normalize_history, write_validation_history, write_metric
 
 
 class SegmentationNetwork(pl.LightningModule):
@@ -136,6 +137,8 @@ class SegmentationNetwork(pl.LightningModule):
         self.test_step_outputs = []
 
     def _log_scalars(self, tag: str, val_dict: dict, step: int) -> None:
+        if self._trainer is not None and not self.trainer.is_global_zero:
+            return
         if hasattr(self, 'logger') and self.logger is not None:
             exp = getattr(self.logger, 'experiment', None)
             if exp is not None and hasattr(exp, 'add_scalars'):
@@ -146,6 +149,20 @@ class SegmentationNetwork(pl.LightningModule):
                     val = v.item() if hasattr(v, 'item') else float(v)
                     metrics[f"{tag}/{k}"] = val
                 self.logger.log_metrics(metrics, step=step)
+
+    def on_save_checkpoint(self, checkpoint):
+        from copy import deepcopy
+        checkpoint['attention'] = deepcopy(getattr(self.network, 'attention', None))
+        checkpoint['val_history'] = deepcopy(normalize_history(self.val_history))
+
+    def on_load_checkpoint(self, checkpoint):
+        expected = getattr(self.network, 'attention', None)
+        if checkpoint.get('attention') != expected:
+            raise ValueError('Checkpoint ATG configuration does not match the selected variant/settings')
+        if 'val_history' not in checkpoint:
+            raise ValueError('Legacy checkpoint has no val_history: resume requires a separate manual audit; '
+                             'history is never reconstructed from CSV')
+        self.val_history = normalize_history(checkpoint['val_history'])
 
     def compute_loss(self, logits: torch.Tensor, y: torch.Tensor, mode: str,
                      mask_keep: Optional[torch.Tensor] = None,
@@ -311,12 +328,7 @@ class SegmentationNetwork(pl.LightningModule):
             return
         # compute loss over all batches
         losses = torch.stack([x['loss'] for x in self.validation_step_outputs])
-        val_loss_avg = losses.mean()
-
-        # logging
-        epoch = self.trainer.current_epoch
-        self._log_scalars('loss', {'val': val_loss_avg}, epoch)
-        self.log('val_loss', val_loss_avg, on_epoch=True, sync_dist=True)
+        val_loss_avg = self.trainer.strategy.reduce(losses.mean(), reduce_op='mean')
 
         # compute final metrics over all batches
         iou_per_class = self.metric_val_iou.compute()
@@ -338,6 +350,24 @@ class SegmentationNetwork(pl.LightningModule):
         self.metric_val_acc.reset()
         self.metric_val_acc_micro.reset()
         self.metric_val_recall.reset()
+
+        # Resolve possible logger broadcasts on ALL ranks, before any writer guard.
+        log_dir = self.trainer.log_dir
+        export_dir = self.trainer.default_root_dir or log_dir or '.'
+        expected = self.trainer.num_val_batches
+        expected = expected[0] if isinstance(expected, (list, tuple)) else expected
+        completed = len(self.validation_step_outputs) == expected
+        if self.trainer.world_size > 1:
+            completed = bool(self.all_gather(torch.tensor(int(completed), device=self.device)).all())
+        if self.trainer.sanity_checking or not completed:
+            # Sanity still executes forward, criterion and distributed metrics;
+            # it never creates history/peak/checkpoint-monitor reporting points.
+            self.validation_step_outputs.clear()
+            return
+
+        epoch = self.trainer.current_epoch
+        self._log_scalars('loss', {'val': val_loss_avg}, epoch)
+        self.log('val_loss', val_loss_avg, on_epoch=True, sync_dist=False)
 
         for class_index, iou_class in enumerate(iou_per_class):
             self._log_scalars(f'iou_class_{class_index}', {'val': iou_class}, epoch)
@@ -393,26 +423,17 @@ class SegmentationNetwork(pl.LightningModule):
             'weed_f1': round(val_weed_f1, 5),
             'lr': current_lr
         }
-        self.val_history.append(row)
+        # Every rank owns the same authoritative state for checkpoint serialization.
+        self.val_history = normalize_history([*self.val_history, row])
 
-        export_dir = getattr(self.trainer, 'default_root_dir', None) or getattr(self.trainer, 'log_dir', None) or '.'
-        history_csv_path = os.path.join(export_dir, 'val_history.csv')
-        try:
-            import csv
-            fieldnames = ['epoch', 'train_loss', 'val_loss', 'mIoU', 'soil_iou', 'crop_iou', 'weed_iou', 'weed_precision', 'weed_recall', 'weed_f1', 'lr']
-            with open(history_csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(self.val_history)
-        except Exception as e:
-            print(f"[Warning] Failed to write val_history.csv: {e}")
-
-        path_to_classwise_dir = os.path.join(self.trainer.log_dir, 'val', 'evaluation', f'epoch-{epoch:06d}')
-        save_metric(iou_per_class, path_to_classwise_dir, 'IoU')
-        save_metric(precision_per_class, path_to_classwise_dir, 'Precision')
-        save_metric(f1_per_class, path_to_classwise_dir, 'F1')
-        save_metric(acc_per_class, path_to_classwise_dir, 'Accuracy')
-        save_metric(recall_per_class, path_to_classwise_dir, 'Recall')
+        if self.trainer.is_global_zero:
+            write_validation_history(os.path.join(export_dir, 'val_history.csv'), self.val_history)
+            path_to_classwise_dir = os.path.join(log_dir, 'val', 'evaluation', f'epoch-{epoch:06d}')
+            save_metric(iou_per_class, path_to_classwise_dir, 'IoU')
+            save_metric(precision_per_class, path_to_classwise_dir, 'Precision')
+            save_metric(f1_per_class, path_to_classwise_dir, 'F1')
+            save_metric(acc_per_class, path_to_classwise_dir, 'Accuracy')
+            save_metric(recall_per_class, path_to_classwise_dir, 'Recall')
 
         self.validation_step_outputs.clear()
 
@@ -469,13 +490,14 @@ class SegmentationNetwork(pl.LightningModule):
         # logging
         epoch = self.trainer.current_epoch
 
-        path_to_classwise_dir = os.path.join(self.trainer.log_dir, 'evaluation', f'epoch-{epoch:06d}')
-
-        save_metric(iou_per_classes, path_to_classwise_dir, 'IoU')
-        save_metric(precision_per_classes, path_to_classwise_dir, 'Precision')
-        save_metric(f1_per_classes, path_to_classwise_dir, 'F1')
-        save_metric(acc_per_classes, path_to_classwise_dir, 'Accuracy')
-        save_metric(recall_per_classes, path_to_classwise_dir, 'Recall')
+        log_dir = self.trainer.log_dir
+        if self.trainer.is_global_zero:
+            path_to_classwise_dir = os.path.join(log_dir, 'evaluation', f'epoch-{epoch:06d}')
+            save_metric(iou_per_classes, path_to_classwise_dir, 'IoU')
+            save_metric(precision_per_classes, path_to_classwise_dir, 'Precision')
+            save_metric(f1_per_classes, path_to_classwise_dir, 'F1')
+            save_metric(acc_per_classes, path_to_classwise_dir, 'Accuracy')
+            save_metric(recall_per_classes, path_to_classwise_dir, 'Recall')
 
         self.test_step_outputs.clear()
 
@@ -507,16 +529,5 @@ class SegmentationNetwork(pl.LightningModule):
 
 
 def save_metric(metrics: torch.Tensor, path_to_dir: str, name: str) -> None:
-    if not os.path.exists(path_to_dir):
-        os.makedirs(path_to_dir, exist_ok=True)
-
-    info = {}
-    for cls_index, metric in enumerate(metrics):
-        info[f'class_{cls_index}'] = round(float(metric), 5)
-
-    info[f'm{name}'] = round(float(metrics.mean()), 5)
-
-    fpath = os.path.join(path_to_dir, f"{name}.yaml")
-    with open(fpath, 'w') as ostream:
-        yaml.dump(info, ostream)
-
+    # Callers enter this only after distributed computation and only on rank zero.
+    write_metric(os.path.join(path_to_dir, f'{name}.yaml'), metrics, name)

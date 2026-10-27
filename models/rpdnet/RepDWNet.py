@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
+from models.rpdnet.fuse_atg import validate_attention, make_attention
 
 
 class DoubleConv_down_repdw(nn.Module):
@@ -96,12 +97,16 @@ class RepDWNet(nn.Module):
                  base_c: int = 16,
                  deploy: bool = False,
                  use_se: bool = False,
-                 num_dw_branches: int = 4):
+                 num_dw_branches: int = 4,
+                 attention=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
+        self.attention = validate_attention(attention)
+        if self.attention is not None and (base_c != 16 or not bilinear or deploy or num_classes != 3):
+            raise ValueError("ATG NOW requires base_c16, bilinear, 3 classes and unfused graph")
 
         # Stem: 2x RepConvbn 3x3 (giữ nguyên gốc)
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
@@ -121,13 +126,32 @@ class RepDWNet(nn.Module):
 
         # Head: 1x1 Conv
         self.out_conv = OutConv(base_c, num_classes)
+        if self.attention is not None:
+            # Keep every P2 weight and the following RNG stream unchanged.
+            with torch.random.fork_rng(devices=[]):
+                self.attention_gating, self.attention_gates = make_attention(self.attention)
 
-    def forward(self, x):
+
+    def forward(self, x, return_attention=False):
+        if return_attention and self.attention is None:
+            raise ValueError("Attention maps require an enabled ATG configuration")
         x1 = self.in_conv(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
+        if self.attention is not None:
+            gating = self.attention_gating(x5)
+            skip4, alpha4 = self.attention_gates['4'](x4, gating)
+            x = self.up1(x5, skip4)  # original x5, not G(x5), enters the decoder
+            skip3, alpha3 = self.attention_gates['3'](x3, x if self.attention['strategy'] == 'PRG' else gating)
+            x = self.up2(x, skip3)
+            skip2, alpha2 = self.attention_gates['2'](x2, x if self.attention['strategy'] == 'PRG' else gating)
+            x = self.up3(x, skip2)
+            logits = self.out_conv(self.up4(x, x1))
+            if return_attention:
+                return {'logits':logits, 'attention':{'ag4':alpha4, 'ag3':alpha3, 'ag2':alpha2}}
+            return logits
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
         x = self.up3(x, x2)
