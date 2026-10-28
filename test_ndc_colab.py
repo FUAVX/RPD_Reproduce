@@ -81,14 +81,14 @@ class ColabTests(unittest.TestCase):
         for i in [4,6,7,8]:
             self.assertNotIn('sys.executable',''.join(notebook['cells'][i]['source']))
         ns={};exec(''.join(notebook['cells'][1]['source']),ns)
-        self.assertEqual(ns['EXPERIMENT_MODES'],['control','ex1'])
+        self.assertEqual(ns['EXPERIMENT_MODES'],['ex1'])
         self.assertEqual(ns['DATASET_HANDLE'],'ndhoang2310/phenobench-dataset/versions/1')
         with tempfile.TemporaryDirectory() as tmp:
             ns.update(ROOT=Path(tmp),PERSISTENT=Path(tmp)/'drive',REPO_DIR=ROOT,
                       dataset_dir=Path('/dataset/PhenoBench'),backup_metas={},copy=__import__('copy'),
                       yaml=yaml,validate_recipe=validate_recipe,PROTOCOL=PROTOCOL)
             exec(''.join(notebook['cells'][5]['source']),ns)
-            self.assertEqual(set(ns['RUNS']),{'control','ex1'})
+            self.assertEqual(set(ns['RUNS']),{'ex1'})
             for mode,info in ns['RUNS'].items():self.assertEqual(validate_recipe(info['cfg']),mode)
 
     def test_lightweight_io_imports_without_training_dependencies(self):
