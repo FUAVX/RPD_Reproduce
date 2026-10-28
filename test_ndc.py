@@ -127,14 +127,31 @@ class NDCTests(unittest.TestCase):
 
     def test_fusion_certification_rejects_changed_logits(self):
         from scripts.audit_ndc_reparameterization import audit
+        class BoundedLogits(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.logits=nn.Parameter(torch.tensor([1.0,2.0,3.0]).reshape(1,3,1,1),requires_grad=False)
+                self.h_units=nn.ModuleDict({f'H{i}':nn.Identity() for i in range(6)})
+            def forward(self,x):return self.logits.expand(x.shape[0],3,*x.shape[2:])
         class Changed(nn.Module):
-            def __init__(self,m):super().__init__();self.m=m
-            def forward(self,x):return self.m(x)+1.0
-        net=get_backbone(config('ex1')).eval()
-        with patch('scripts.audit_ndc_reparameterization.RPD_model_deploy',side_effect=lambda m,do_copy:Changed(m)):
-            report=audit(net,sizes=((32,32),))
-        self.assertEqual(report['status'],'not_certified')
-        self.assertFalse(report['probes'][0]['passed'])
+            def __init__(self,m,offset):super().__init__();self.m=m;self.offset=offset
+            @property
+            def h_units(self):return self.m.h_units
+            def forward(self,x):return self.m(x)+self.offset
+        # Bound logits so a fixed perturbation cannot be hidden by rtol on a
+        # randomly initialized NDC. Preserve H metadata to isolate logit checks.
+        net=BoundedLogits().eval()
+        for offset,expected_pass in [(0.0,True),(1e-5,True),(1.0,False)]:
+            with self.subTest(offset=offset):
+                with patch('scripts.audit_ndc_reparameterization.RPD_model_deploy',side_effect=lambda m,do_copy:Changed(m,offset)):
+                    report=audit(net,sizes=((32,32),(33,35)))
+                self.assertEqual((report['atol'],report['rtol']),(1e-4,1e-4))
+                self.assertEqual(report['H_nodes_expected'],6)
+                self.assertEqual(report['H_nodes_preserved'],6)
+                self.assertEqual(report['status'],'passed' if expected_pass else 'not_certified')
+                for probe in report['probes']:
+                    self.assertTrue(probe['finite'])
+                    self.assertEqual(probe['passed'],expected_pass)
 
     def test_export_metadata_and_original_objective(self):
         for mode in SCENARIOS:
