@@ -1,0 +1,7 @@
+{
+  "commit": "e9153d4243e7bb67880c380ce803b176c81476f1",
+  "helper_sha256": "b9a7db6682fd926a83712f9175123b8a42cc4e4251a6c3dba41104605cd3165a",
+  "initialization_reference": "https://github.com/keras-team/keras/blob/2.2.4/keras/initializers.py",
+  "truncation_std_correction": 0.8796256610342398,
+  "runtime_dependency_on_keras_tensorflow": false
+}

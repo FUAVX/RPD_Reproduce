@@ -1,0 +1,22 @@
+UNet++ reference and team adaptation notice
+
+Original scientific/code source: Zongwei Zhou, Md Mahfuzur Rahman Siddiquee,
+Nima Tajbakhsh, Jianming Liang; Arizona State University.
+UNetPlusPlus commit e9153d4243e7bb67880c380ce803b176c81476f1.
+https://github.com/MrGiovanni/UNetPlusPlus
+Copyright2019 Arizona Board of Regents on behalf of Arizona State University.
+See LICENSE.UNetPlusPlus for source-specific academic/non-commercial terms.
+
+helper_functions.py is an unchanged reference fixture for AST inspection only.
+No Keras/TensorFlow/nnU-Net framework is imported by the training runtime.
+
+Team adaptation in models/rpdnet/fuse_ndc.py and RepDWNet.py:
+- Implemented PyTorch/NCHW H units using two Conv/ReLU/Dropout operations.
+- Ported truncated He distribution based on Keras2.2.4 reference mathematics.
+- Kept P2 bilinear x2+pad and RepDW decoder with fixed mid/output channels.
+- Omitted separate kernel-L2 objective; retained P2 coupled Adam WD policy.
+- Kept one3-class raw-logit head; no DS, transpose upsampling or node pruning.
+These adaptations do not claim invention of UNet++ or nested dense connectivity.
+
+This notice describes reference/adapted portions; it does not relabel the license
+of every other component in the project or assert commercial permission.
