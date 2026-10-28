@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/hszhao/ICNet",
+  "commit": "dd2bf78ff3f9ff05f6d35c40a3ee216158d9e892",
+  "file": "evaluation/prototxt/icnet_cityscapes.prototxt",
+  "paper": "Zhao et al., ICNet, ECCV2018, section3.3",
+  "scope": "Caffe evaluation operators only; new PyTorch module written by team",
+  "team_policies": [
+    "four stages + RepDW",
+    "P2 resize",
+    "fixed mids",
+    "training BN/bias/init",
+    "five ablations",
+    "no CLG"
+  ]
+}

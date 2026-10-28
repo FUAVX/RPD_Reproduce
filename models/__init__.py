@@ -15,6 +15,10 @@ from .rpdnet.RPD_ops import *
 
 
 def get_backbone(cfg: Dict) -> nn.Module:
+    if any(cfg['backbone'].get(k) is not None for k in ('fusion','attention','downsampling','deep_supervision','nested')):
+        raise ValueError('CFF NOW excludes FPN, ATG, Down, Deep and NDC settings')
+    if cfg['backbone'].get('cff') is not None and cfg['backbone']['name'] != 'RepDWNet':
+        raise ValueError('CFF NOW supports RepDWNet only')
     num_classes = cfg['backbone']['num_classes']
     pretrained = cfg['backbone']['pretrained']
 
@@ -47,7 +51,8 @@ def get_backbone(cfg: Dict) -> nn.Module:
         num_dw_branches = cfg['backbone'].get('num_dw_branches', 4)
         base_c = cfg['backbone'].get('base_c', 16)
         return RepDWNet(num_classes, deploy=deploy, use_se=use_se,
-                        num_dw_branches=num_dw_branches, base_c=base_c)
+                        num_dw_branches=num_dw_branches, base_c=base_c,
+                        cff=cfg['backbone'].get('cff'))
 
     raise ValueError('The requested backbone is not supported.')
 

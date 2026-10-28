@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from models.rpdnet.RPD_Module import RPD
 from models.rpdnet.RPDNet import DoubleConv, OutConv
 from models.rpdnet.rep_dw import RepDW
+from models.rpdnet.fuse_cff import validate_cff, CFFUp
 
 
 class DoubleConv_down_repdw(nn.Module):
@@ -96,12 +97,16 @@ class RepDWNet(nn.Module):
                  base_c: int = 16,
                  deploy: bool = False,
                  use_se: bool = False,
-                 num_dw_branches: int = 4):
+                 num_dw_branches: int = 4,
+                 cff=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
+        self.cff = validate_cff(cff)
+        if self.cff is not None and (base_c != 16 or not bilinear or deploy or num_classes != 3):
+            raise ValueError("CFF NOW requires base_c16, bilinear, 3 classes and unfused graph")
 
         # Stem: 2x RepConvbn 3x3 (giữ nguyên gốc)
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
@@ -121,6 +126,13 @@ class RepDWNet(nn.Module):
 
         # Head: 1x1 Conv
         self.out_conv = OutConv(base_c, num_classes)
+        if self.cff is not None:
+            # Construct the complete P2 host first. Preserve encoder/head and
+            # caller RNG; all CFF experiments share the same RepDW initialization.
+            with torch.random.fork_rng(devices=[]):
+                for stage,channels,output in [(1,128,64),(2,64,32),(3,32,16),(4,16,16)]:
+                    setattr(self,f'up{stage}',CFFUp(channels,output,self.cff,
+                        DoubleConv_down_repdw,deploy,use_se,num_dw_branches))
 
     def forward(self, x):
         x1 = self.in_conv(x)
