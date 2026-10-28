@@ -271,7 +271,26 @@ def main():
         seed_val = cfg['seed']
     seed_everything(seed_val) 
 
-    datasetmodule = get_data_module(cfg) 
+    colab_protocol = cfg.get('execution', {}).get('protocol')
+    seg_class = model_multimetrics.SegmentationNetwork
+    last_checkpoint_class = ModelCheckpoint
+    if colab_protocol:
+        from functools import partial
+        from utils.ndc_colab import (validate_recipe, configure_fp32, ColabDataModule,
+                                    ColabNetwork, ColabLastCheckpoint)
+        validate_recipe(cfg);configure_fp32()
+        import subprocess
+        os.makedirs(args['export_dir'], exist_ok=True)
+        source_commit = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+        with open(os.path.join(args['export_dir'],'source_commit.txt'),'w') as stream:
+            stream.write(source_commit+chr(10))
+        with open(os.path.join(args['export_dir'],'resolved_config.yaml'),'w') as stream:
+            yaml.safe_dump(cfg,stream,sort_keys=False)
+        datasetmodule = ColabDataModule(cfg)
+        seg_class = ColabNetwork
+        last_checkpoint_class = partial(ColabLastCheckpoint, backup_dir=cfg['execution']['backup_dir'])
+    else:
+        datasetmodule = get_data_module(cfg)
     criterion = get_criterion(cfg)
 
     # define backbone
@@ -283,7 +302,7 @@ def main():
     warmup_epochs = cfg['train'].get('warmup_epochs', 5)
 
     if (args['ckpt_path'] is not None) and (not args['resume']):
-        seg_module = model_multimetrics.SegmentationNetwork(network,
+        seg_module = seg_class(network,
                                                 criterion,
                                                 cfg['train']['learning_rate'],
                                                 cfg['train']['weight_decay'],
@@ -293,7 +312,7 @@ def main():
                                                 scheduler_type=scheduler_type,
                                                 warmup_epochs=warmup_epochs)
     else:
-        seg_module = model_multimetrics.SegmentationNetwork(network,
+        seg_module = seg_class(network,
                                                             criterion,
                                                             cfg['train']['learning_rate'],
                                                             cfg['train']['weight_decay'],
@@ -309,7 +328,7 @@ def main():
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
     # Guaranteed persistent last.ckpt saved on EVERY epoch end for pause/resume tolerance
-    checkpoint_saver_epoch_last = ModelCheckpoint(
+    checkpoint_saver_epoch_last = last_checkpoint_class(
         dirpath=ckpt_dir,
         save_top_k=0,
         save_last=True,
@@ -462,6 +481,10 @@ def main():
     if cfg['experiment']['id'].startswith('NDC-'):
         from callbacks.ndc_cost import NDCCostCallback
         all_callbacks.append(NDCCostCallback(args['export_dir']))
+
+    if colab_protocol:
+        from utils.ndc_colab import PairedRankState
+        all_callbacks.append(PairedRankState())
 
     # Setup trainer
     trainer = Trainer(
