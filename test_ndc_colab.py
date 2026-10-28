@@ -71,8 +71,15 @@ class ColabTests(unittest.TestCase):
         notebook=json.loads((ROOT/'notebook/colab_train_repdwnet_ndc_a100.ipynb').read_text())
         for cell in notebook['cells']:
             if cell['cell_type']=='code':
-                ast.parse(''.join(line for line in cell['source'] if not line.lstrip().startswith('!')))
+                tree=ast.parse(''.join(line for line in cell['source'] if not line.lstrip().startswith('!')))
+                for node in ast.walk(tree):
+                    if isinstance(node,ast.Import):
+                        self.assertFalse(any(a.name.split('.')[0] in ('torch','numpy','pytorch_lightning','kagglehub') for a in node.names))
+                    if isinstance(node,ast.ImportFrom):
+                        self.assertNotIn((node.module or '').split('.')[0],('torch','numpy','pytorch_lightning','kagglehub'))
                 self.assertEqual(cell['outputs'],[]);self.assertIsNone(cell['execution_count'])
+        for i in [4,6,7,8]:
+            self.assertNotIn('sys.executable',''.join(notebook['cells'][i]['source']))
         ns={};exec(''.join(notebook['cells'][1]['source']),ns)
         self.assertEqual(ns['EXPERIMENT_MODES'],['control','ex1'])
         self.assertEqual(ns['DATASET_HANDLE'],'ndhoang2310/phenobench-dataset/versions/1')
@@ -83,5 +90,17 @@ class ColabTests(unittest.TestCase):
             exec(''.join(notebook['cells'][5]['source']),ns)
             self.assertEqual(set(ns['RUNS']),{'control','ex1'})
             for mode,info in ns['RUNS'].items():self.assertEqual(validate_recipe(info['cfg']),mode)
+
+    def test_lightweight_io_imports_without_training_dependencies(self):
+        import subprocess,sys
+        code="""import sys,importlib.abc
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self,fullname,path=None,target=None):
+        if fullname.split('.')[0] in ('numpy','torch','pytorch_lightning','torchmetrics','datasets','models'):
+            raise AssertionError('Kernel loaded training dependency: '+fullname)
+sys.meta_path.insert(0,Block())
+from utils.ndc_colab_io import publish_backup,restore_backup,validate_recipe
+"""
+        subprocess.run([sys.executable,'-S','-c',code],cwd=ROOT,check=True)
 
 if __name__=='__main__':torch.set_num_threads(2);unittest.main()
