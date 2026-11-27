@@ -52,7 +52,7 @@ def smoke(cfg, output, accelerator='cpu', devices=1, resume=False):
         trainer_smoke(cfg, output, accelerator, devices, resume)
     trained = load_training_model(cfg, Path(output)/'checkpoints/last.ckpt')
     pools = [m for m in trained.modules() if isinstance(m, AAAMaxBlurPool)]
-    assert len(pools) == (4 if cfg['backbone'].get('downsampling') else 0)
+    assert len(pools) == (4 if (cfg['backbone'].get('downsampling') or {}).get('variant') == 'aaa_tri3' else 0)
     for pool in pools:
         assert torch.equal(pool.filt, tri3_filter(pool.channels))
 
@@ -150,7 +150,7 @@ class DeepDownTests(unittest.TestCase):
         nb = json.loads((ROOT/'notebook/kaggle_train_repdwnet_deepdown.ipynb').read_text())
         first = next(c for c in nb['cells'] if c['cell_type'] == 'code'); ns = {}; exec(''.join(first['source']), ns)
         self.assertEqual(ns['GIT_REF'], 'f/deepdown'); self.assertEqual(ns['EXPERIMENT_MODE'], 'ex0')
-        self.assertEqual(ns['DEVICES'], 2); self.assertEqual(set(ns['EXPERIMENTS']), {'control', 'ex0'})
+        self.assertEqual(ns['DEVICES'], 2); self.assertEqual(ns['EXPERIMENTS'], __import__('utils.deepdown_campaign', fromlist=['EXPERIMENTS']).EXPERIMENTS)
         text = '\n'.join(''.join(c['source']) for c in nb['cells'])
         for token in ['3100c6fd1f2bb9fe3887f2b15a0a306054e21c38',
                       '0d2f5c55299a297feae3aecdbe9d2a8ae276e93d',
@@ -179,12 +179,13 @@ if __name__ == '__main__':
         device = torch.device('cuda' if args.accelerator == 'gpu' else 'cpu')
         if device.type == 'cuda' and not torch.cuda.is_available(): raise RuntimeError('Native GPU smoke requires CUDA')
         records = []
-        for key in SCENARIOS:
-            model = get_backbone(config(key)).to(device).train()
+        cases = {'selected': yaml.safe_load(Path(args.config).read_text())} if args.config else {key: config(key) for key in SCENARIOS}
+        for key, cfg in cases.items():
+            model = get_backbone(cfg).to(device).train()
             with torch.no_grad():
                 for size in [768, 1024]:
                     x = torch.randn(1, 3, size, size, device=device)
-                    out = model(x, return_aux=True) if key == 'ex0' else {'main': model(x)}
+                    out = model(x, return_aux=True) if model.deep_supervision is not None else {'main': model(x)}
                     for name, value in out.items():
                         assert value.shape == (1, 3, size, size) and torch.isfinite(value).all()
                     records.append({'mode': key, 'size': size, 'status': 'passed'})

@@ -26,6 +26,8 @@ def load_training_model(cfg, checkpoint, device='cpu'):
     if ('state_dict' in payload and ('downsampling' in payload or cfg['backbone'].get('deep_supervision') is not None)
             and payload.get('downsampling') != cfg['backbone'].get('downsampling')):
         raise ValueError('Checkpoint downsampling configuration mismatch')
+    if 'state_dict' in payload and payload.get('feature_fusion') != cfg['backbone'].get('fusion'):
+        raise ValueError('Checkpoint feature fusion configuration mismatch')
     raw = payload.get('state_dict', payload)
     state = {k[len('network.'):]: v for k,v in raw.items() if k.startswith('network.')} if any(k.startswith('network.') for k in raw) else raw
     model = get_backbone(cfg)
@@ -47,6 +49,7 @@ def export(cfg, checkpoint, output_dir, device='cpu', fuse=False, sizes=((768,76
               'graph':'main_only_unfused_eval','auxiliary_removed':True,'stripping_parity':[],
               'main_trainable_params':sum(p.numel() for p in main.parameters()),
               'downsampling_preserved':deepcopy(getattr(main, 'downsampling', None)),
+              'feature_fusion_preserved':deepcopy(getattr(main, 'fusion', None)),
               'fusion':{'status':'not_requested','absolute_logit_tolerance':1e-4}}
     with torch.inference_mode():
         for x in probes:

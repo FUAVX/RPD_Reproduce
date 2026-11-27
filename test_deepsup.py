@@ -82,7 +82,7 @@ def trainer_smoke(cfg,output,accelerator='cpu',devices=1,resume=False):
             for name in ['train_main_loss','train_aux_loss','train_total_loss','val_mIoU']:assert events.Scalars(name)
         load_training_model(cfg,output/'checkpoints/last.ckpt')
         cost=json.loads((output/'training_cost.json').read_text());assert cost['world_size']==devices
-        assert cost['main_trainable_params']==189827
+        assert cost['main_trainable_params']==sum(p.numel() for p in net.network.inference_model().parameters())
         print(f'PASS trainer {cfg["experiment"]["id"]}: devices={devices}, resume={resume}',flush=True)
 
 def pipeline_smoke(cfg, output, accelerator='cpu', devices=1):

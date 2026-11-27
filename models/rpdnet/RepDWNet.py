@@ -8,6 +8,7 @@ from models.rpdnet.rep_dw import RepDW
 from models.rpdnet.downsampling import make_downsampling
 from models.rpdnet.deep_supervision import AuxiliaryHead, TAP_CHANNELS, validate_deep_supervision
 from copy import deepcopy
+from models.rpdnet.fuse_fpn import AddUp
 
 
 class DoubleConv_down_repdw(nn.Module):
@@ -102,13 +103,19 @@ class RepDWNet(nn.Module):
                  use_se: bool = False,
                  num_dw_branches: int = 4,
                  deep_supervision=None,
-                 downsampling=None):
+                 downsampling=None,
+                 fusion=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
         self.downsampling = deepcopy(downsampling)
+        if fusion is not None and fusion != {'variant': 'add'}:
+            raise ValueError('DeDo supports only FPN A-oA fusion: variant=add')
+        if fusion is not None and (base_c != 16 or not bilinear):
+            raise ValueError('A-oA requires base_c=16 and bilinear=True')
+        self.fusion = deepcopy(fusion)
 
         # Stem: 2x RepConvbn 3x3 (giữ nguyên gốc)
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
@@ -120,11 +127,18 @@ class RepDWNet(nn.Module):
         factor = 2 if bilinear else 1
         self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=4)
 
-        # Decoder: 4 stages
-        self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-        self.up2 = Up_repdw(base_c * 8, base_c * 4 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-        self.up3 = Up_repdw(base_c * 4, base_c * 2 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-        self.up4 = Up_repdw(base_c * 2, base_c, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+        # A-oA keeps the original hidden/output widths at all four decoder stages.
+        if self.fusion is not None:
+            self.up1, self.up2, self.up3, self.up4 = [
+                AddUp(c, out, False, DoubleConv_down_repdw, deploy, use_se, num_dw_branches)
+                for c, out in ((128, 64), (64, 32), (32, 16), (16, 16))
+            ]
+        else:
+            # Decoder: 4 stages
+            self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+            self.up2 = Up_repdw(base_c * 8, base_c * 4 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+            self.up3 = Up_repdw(base_c * 4, base_c * 2 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+            self.up4 = Up_repdw(base_c * 2, base_c, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
 
         # Head: 1x1 Conv
         self.out_conv = OutConv(base_c, num_classes)
@@ -162,7 +176,7 @@ class RepDWNet(nn.Module):
         return {'main': main, 'aux': aux}
 
     def inference_model(self):
-        """Copy the learned main graph with no auxiliary module/weights or fusion."""
+        """Copy the learned main graph without auxiliary weights; retain downsampling and feature fusion."""
         model = deepcopy(self)
         model.aux_head = None
         model.deep_supervision = None

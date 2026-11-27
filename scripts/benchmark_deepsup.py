@@ -23,6 +23,8 @@ from torch import distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 import yaml
 from models import get_backbone, get_criterion
+from models.rpdnet.dpp import dpp_optimizer_groups
+from utils.deepdown_campaign import EXPERIMENTS as DEEPDOWN_EXPERIMENTS
 
 SCENARIOS={'control':'P3_DeepSup_Control',**{f'ex{i}':f'P3_DeepSup_Ex{i}_x{i+2}' for i in range(1,6)}}
 
@@ -47,7 +49,7 @@ def measure(cfg,args,device,world_size):
         x=torch.randn(args.batch_size,3,args.size,args.size,device=device)
         target=torch.randint(0,3,(args.batch_size,args.size,args.size),device=device)
         criterion=get_criterion(cfg).to(device)
-        optimizer=torch.optim.Adam(model.parameters(),lr=cfg['train']['learning_rate'],weight_decay=cfg['train']['weight_decay']) if args.mode=='training' else None
+        optimizer=torch.optim.Adam(dpp_optimizer_groups(model,cfg['train']['learning_rate'],cfg['train']['weight_decay']),lr=cfg['train']['learning_rate'],weight_decay=cfg['train']['weight_decay']) if args.mode=='training' else None
         model.train(args.mode=='training')
         deep=model.deep_supervision
         if world_size>1:model=DistributedDataParallel(model,device_ids=[device.index] if device.type=='cuda' else None,find_unused_parameters=False)
@@ -103,7 +105,7 @@ if __name__=='__main__':
     parser.add_argument('--campaign',choices=['deepsup','deepdown'],default='deepsup')
     parser.add_argument('--experiments',nargs='+')
     parser.add_argument('--output-dir',required=True);args=parser.parse_args()
-    scenarios = SCENARIOS if args.campaign=='deepsup' else {'control':'DeepDown_Control','ex0':'DeepDown_Ex0'}
+    scenarios = SCENARIOS if args.campaign=='deepsup' else {k:v[1] for k,v in DEEPDOWN_EXPERIMENTS.items()}
     config_dir = 'configs/p3_deepsup' if args.campaign=='deepsup' else 'configs/p35_deepdown'
     args.experiments = args.experiments or list(scenarios)
     if any(key not in scenarios for key in args.experiments) or 'control' not in args.experiments:

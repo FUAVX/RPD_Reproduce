@@ -155,6 +155,7 @@ class SegmentationNetwork(pl.LightningModule):
         from copy import deepcopy
         checkpoint['deep_supervision'] = deepcopy(getattr(self.network, 'deep_supervision', None))
         checkpoint['downsampling'] = deepcopy(getattr(self.network, 'downsampling', None))
+        checkpoint['feature_fusion'] = deepcopy(getattr(self.network, 'fusion', None))
         checkpoint['val_history'] = deepcopy(normalize_history(self.val_history))
 
     def on_load_checkpoint(self, checkpoint):
@@ -163,6 +164,8 @@ class SegmentationNetwork(pl.LightningModule):
             raise ValueError('Checkpoint DeepSup configuration does not match the selected tap/settings')
         if checkpoint.get('downsampling') != getattr(self.network, 'downsampling', None):
             raise ValueError('Checkpoint downsampling configuration does not match the selected settings')
+        if checkpoint.get('feature_fusion') != getattr(self.network, 'fusion', None):
+            raise ValueError('Checkpoint feature fusion configuration does not match the selected settings')
         if 'val_history' not in checkpoint:
             raise ValueError('Legacy checkpoint has no val_history: resume requires a separate manual audit; '
                              'history is never reconstructed from CSV')
