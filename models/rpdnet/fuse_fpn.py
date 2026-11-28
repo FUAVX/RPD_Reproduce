@@ -5,12 +5,14 @@ from torch.nn import functional as F
 
 class AddUp(nn.Module):
     """Keep Control's upsample/pad, Cmid and Cout; change fusion input width."""
-    def __init__(self, channels, out_channels, projected, block, deploy, use_se, branches):
+    def __init__(self, channels, out_channels, projected, block, deploy, use_se, branches,
+                 spatial_block='repdw'):
         super().__init__()
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        # Processing/head retain original initialization; new projection alone uses C2 fill.
+        # Keep the existing initialization of the selected RepDW or B0-RO PDC block.
         self.conv = block(channels, out_channels, mid_channels=channels,
-                          deploy=deploy, use_se=use_se, num_dw_branches=branches)
+                          deploy=deploy, use_se=use_se, num_dw_branches=branches,
+                          spatial_block=spatial_block)
         if projected:
             raise ValueError('DeDo supports A-oA without projection only')
         self.lateral = nn.Identity()

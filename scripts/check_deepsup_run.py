@@ -41,6 +41,8 @@ def audit_run(output_dir, expected_epochs=100, val_interval=5):
             raise ValueError(f'Checkpoint {monitor} differs from synchronized history')
         if selected.get('deep_supervision') != state.get('deep_supervision'):
             raise ValueError('Selected checkpoint tap/settings differ from campaign')
+        if selected.get('spatial_block', 'repdw') != state.get('spatial_block', 'repdw'):
+            raise ValueError('Selected checkpoint spatial block differs from campaign')
         if selected.get('feature_fusion') != state.get('feature_fusion'):
             raise ValueError('Selected checkpoint feature fusion differs from campaign')
         if selected.get('downsampling') != state.get('downsampling'):

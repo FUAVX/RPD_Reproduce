@@ -15,11 +15,11 @@ class DoubleConv_down_repdw(nn.Module):
     """
     Building block cho Encoder/Decoder của RepDWNet.
     Gồm 2 stage (Conv1 và Conv2). Mỗi stage cấu trúc Depthwise Separable:
-      - Lớp 1: RepDW (Depthwise Conv 3x3 đa nhánh chuẩn)
+      - Lớp 1: RepDW mặc định; RPD PDC như B0-RO khi spatial_block=pdc
       - Lớp 2: RPD('cv', kernel_size=1) (Pointwise Conv 1x1 đa nhánh chuẩn)
     """
     def __init__(self, in_channels, out_channels, mid_channels=None,
-                 deploy=False, use_se=False, num_dw_branches=4):
+                 deploy=False, use_se=False, num_dw_branches=4, spatial_block='repdw'):
         if mid_channels is None:
             mid_channels = out_channels
         super().__init__()
@@ -27,6 +27,11 @@ class DoubleConv_down_repdw(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.mid_channels = mid_channels
+        if spatial_block not in ('repdw', 'pdc'):
+            raise ValueError('spatial_block must be repdw or pdc')
+        if spatial_block == 'pdc' and deploy:
+            raise ValueError('PDC restoration uses the original unfused training graph')
+        self.spatial_block = spatial_block
 
         self.Conv1 = self._make_stage(in_channels, mid_channels, deploy, use_se, num_dw_branches)
         self.Conv2 = self._make_stage(mid_channels, out_channels, deploy, use_se, num_dw_branches)
@@ -38,11 +43,18 @@ class DoubleConv_down_repdw(nn.Module):
 
     def _make_stage(self, in_channels, out_channels, deploy, use_se, num_dw_branches):
         layers = []
-        # Lớp 1 (Depthwise): RepDW thay thế RPD('pdc')
-        layers.append(RepDW(in_channels=in_channels, out_channels=in_channels,
-                            kernel_size=3, stride=1, groups=in_channels,
-                            bias=True, deploy=deploy, use_se=use_se,
-                            num_dw_branches=num_dw_branches))
+        if self.spatial_block == 'pdc':
+            # B0-RO: CV/CD/AD/RD + DW1x1 + Identity-BN, theta=0.5
+            # from config_block('pdc'); num_dw_branches applies to RepDW only.
+            layers.append(RPD('pdc', in_channels=in_channels, out_channels=in_channels,
+                              kernel_size=3, stride=1, groups=in_channels, bias=True,
+                              deploy=False, use_se=use_se, convert=False,
+                              num_conv_branches=1))
+        else:
+            layers.append(RepDW(in_channels=in_channels, out_channels=in_channels,
+                                kernel_size=3, stride=1, groups=in_channels,
+                                bias=True, deploy=deploy, use_se=use_se,
+                                num_dw_branches=num_dw_branches))
         # Lớp 2 (Pointwise): RPD('cv') giữ nguyên 100% của tác giả
         layers.append(RPD('cv', in_channels=in_channels, out_channels=out_channels,
                           kernel_size=1, stride=1, groups=1, bias=True,
@@ -53,28 +65,28 @@ class DoubleConv_down_repdw(nn.Module):
 
 class Down_repdw(nn.Sequential):
     def __init__(self, in_channels, out_channels, deploy=False, use_se=False, num_dw_branches=4,
-                 downsampling=None, stage=None):
+                 downsampling=None, stage=None, spatial_block='repdw'):
         super().__init__(
             make_downsampling(in_channels, downsampling, stage),
             DoubleConv_down_repdw(in_channels, out_channels, deploy=deploy,
-                                  use_se=use_se, num_dw_branches=num_dw_branches)
+                                  use_se=use_se, num_dw_branches=num_dw_branches, spatial_block=spatial_block)
         )
 
 
 class Up_repdw(nn.Module):
     def __init__(self, in_channels, out_channels, bilinear=True, deploy=False,
-                 use_se=False, num_dw_branches=4):
+                 use_se=False, num_dw_branches=4, spatial_block='repdw'):
         super().__init__()
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
             self.conv = DoubleConv_down_repdw(in_channels, out_channels, in_channels // 2,
                                               deploy=deploy, use_se=use_se,
-                                              num_dw_branches=num_dw_branches)
+                                              num_dw_branches=num_dw_branches, spatial_block=spatial_block)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             self.conv = DoubleConv_down_repdw(in_channels, out_channels, deploy=deploy,
                                               use_se=use_se,
-                                              num_dw_branches=num_dw_branches)
+                                              num_dw_branches=num_dw_branches, spatial_block=spatial_block)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -92,7 +104,7 @@ class Up_repdw(nn.Module):
 class RepDWNet(nn.Module):
     """
     RepDWNet: U-Net kiến trúc Depthwise Separable tái tham số hóa (Structural Re-parameterization).
-    Thay thế các toán tử vi sai PDC bằng khối RepDW chuẩn, loại bỏ quy trình convert 2 bước.
+    Default spatial processing is RepDW; DeDo can restore the original B0-RO PDC block.
     """
     def __init__(self,
                  num_classes: int,
@@ -104,13 +116,19 @@ class RepDWNet(nn.Module):
                  num_dw_branches: int = 4,
                  deep_supervision=None,
                  downsampling=None,
-                 fusion=None):
+                 fusion=None,
+                 spatial_block='repdw'):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.base_c = base_c
         self.downsampling = deepcopy(downsampling)
+        if spatial_block not in ('repdw', 'pdc'):
+            raise ValueError('spatial_block must be repdw or pdc')
+        if spatial_block == 'pdc' and (base_c != 16 or not bilinear or num_classes != 3 or deploy):
+            raise ValueError('DeDo PDC requires base_c16, bilinear=True, 3 classes and deploy=False')
+        self.spatial_block = spatial_block
         if fusion is not None and fusion != {'variant': 'add'}:
             raise ValueError('DeDo supports only FPN A-oA fusion: variant=add')
         if fusion is not None and (base_c != 16 or not bilinear):
@@ -121,24 +139,25 @@ class RepDWNet(nn.Module):
         self.in_conv = DoubleConv(in_channels, base_c, deploy=deploy)
 
         # Encoder: 4 stages
-        self.down1 = Down_repdw(base_c, base_c * 2, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=1)
-        self.down2 = Down_repdw(base_c * 2, base_c * 4, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=2)
-        self.down3 = Down_repdw(base_c * 4, base_c * 8, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=3)
+        self.down1 = Down_repdw(base_c, base_c * 2, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=1, spatial_block=spatial_block)
+        self.down2 = Down_repdw(base_c * 2, base_c * 4, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=2, spatial_block=spatial_block)
+        self.down3 = Down_repdw(base_c * 4, base_c * 8, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=3, spatial_block=spatial_block)
         factor = 2 if bilinear else 1
-        self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=4)
+        self.down4 = Down_repdw(base_c * 8, base_c * 16 // factor, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, downsampling=downsampling, stage=4, spatial_block=spatial_block)
 
         # A-oA keeps the original hidden/output widths at all four decoder stages.
         if self.fusion is not None:
             self.up1, self.up2, self.up3, self.up4 = [
-                AddUp(c, out, False, DoubleConv_down_repdw, deploy, use_se, num_dw_branches)
+                AddUp(c, out, False, DoubleConv_down_repdw, deploy, use_se, num_dw_branches,
+                      spatial_block=spatial_block)
                 for c, out in ((128, 64), (64, 32), (32, 16), (16, 16))
             ]
         else:
             # Decoder: 4 stages
-            self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-            self.up2 = Up_repdw(base_c * 8, base_c * 4 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-            self.up3 = Up_repdw(base_c * 4, base_c * 2 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
-            self.up4 = Up_repdw(base_c * 2, base_c, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches)
+            self.up1 = Up_repdw(base_c * 16, base_c * 8 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, spatial_block=spatial_block)
+            self.up2 = Up_repdw(base_c * 8, base_c * 4 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, spatial_block=spatial_block)
+            self.up3 = Up_repdw(base_c * 4, base_c * 2 // factor, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, spatial_block=spatial_block)
+            self.up4 = Up_repdw(base_c * 2, base_c, bilinear, deploy=deploy, use_se=use_se, num_dw_branches=num_dw_branches, spatial_block=spatial_block)
 
         # Head: 1x1 Conv
         self.out_conv = OutConv(base_c, num_classes)

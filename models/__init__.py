@@ -19,6 +19,8 @@ def get_backbone(cfg: Dict) -> nn.Module:
         raise ValueError('DeepSup-Now supports RepDWNet only')
     if cfg['backbone'].get('fusion') is not None and cfg['backbone']['name'] != 'RepDWNet':
         raise ValueError('DeDo fusion supports RepDWNet only')
+    if 'spatial_block' in cfg['backbone'] and cfg['backbone']['name'] != 'RepDWNet':
+        raise ValueError('spatial_block selection supports the DeDo RepDWNet host only')
     num_classes = cfg['backbone']['num_classes']
     pretrained = cfg['backbone']['pretrained']
 
@@ -54,7 +56,8 @@ def get_backbone(cfg: Dict) -> nn.Module:
                         num_dw_branches=num_dw_branches, base_c=base_c,
                         deep_supervision=cfg['backbone'].get('deep_supervision'),
                         downsampling=cfg['backbone'].get('downsampling'),
-                        fusion=cfg['backbone'].get('fusion'))
+                        fusion=cfg['backbone'].get('fusion'),
+                        spatial_block=cfg['backbone'].get('spatial_block', 'repdw'))
 
     raise ValueError('The requested backbone is not supported.')
 

@@ -156,6 +156,7 @@ class SegmentationNetwork(pl.LightningModule):
         checkpoint['deep_supervision'] = deepcopy(getattr(self.network, 'deep_supervision', None))
         checkpoint['downsampling'] = deepcopy(getattr(self.network, 'downsampling', None))
         checkpoint['feature_fusion'] = deepcopy(getattr(self.network, 'fusion', None))
+        checkpoint['spatial_block'] = getattr(self.network, 'spatial_block', None)
         checkpoint['val_history'] = deepcopy(normalize_history(self.val_history))
 
     def on_load_checkpoint(self, checkpoint):
@@ -166,6 +167,10 @@ class SegmentationNetwork(pl.LightningModule):
             raise ValueError('Checkpoint downsampling configuration does not match the selected settings')
         if checkpoint.get('feature_fusion') != getattr(self.network, 'fusion', None):
             raise ValueError('Checkpoint feature fusion configuration does not match the selected settings')
+        spatial = getattr(self.network, 'spatial_block', None)
+        legacy_spatial = 'repdw' if spatial is not None else None
+        if checkpoint.get('spatial_block', legacy_spatial) != spatial:
+            raise ValueError('Checkpoint spatial block does not match the selected RepDW/PDC graph')
         if 'val_history' not in checkpoint:
             raise ValueError('Legacy checkpoint has no val_history: resume requires a separate manual audit; '
                              'history is never reconstructed from CSV')

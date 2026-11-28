@@ -31,9 +31,11 @@ class DeDoTests(unittest.TestCase):
                 down = recipe['backbone'].pop('downsampling', None)
                 aux = recipe['backbone'].pop('deep_supervision', None)
                 fusion = recipe['backbone'].pop('fusion', None)
+                spatial = recipe['backbone'].pop('spatial_block', 'repdw')
+                self.assertEqual(spatial, 'pdc' if mode.endswith('.pdc') else 'repdw')
                 recipe['experiment'] = base['experiment']
                 self.assertEqual(recipe, base)
-                self.assertEqual(fusion, {'variant':'add'} if mode.endswith('.elwAdd') else None)
+                self.assertEqual(fusion, {'variant':'add'} if '.elwAdd' in mode else None)
                 if mode != 'control':
                     key = '3Aall' if mode == 'ex0' else mode.split('.')[1]
                     parent = yaml.safe_load((ROOT/'configs/p3_scenarios'/f'{parents[key]}.yaml').read_text())
@@ -72,7 +74,7 @@ class DeDoTests(unittest.TestCase):
                             group = next(g for g in groups if any(q is p for q in g['params']))
                             self.assertEqual(group['weight_decay'],0)
                 opt.step()
-                if mode.endswith('.elwAdd'):
+                if '.elwAdd' in mode:
                     for up,c,o in zip([backbone.up1,backbone.up2,backbone.up3,backbone.up4],[128,64,32,16],[64,32,16,16]):
                         self.assertIsInstance(up,AddUp); self.assertIsInstance(up.lateral,nn.Identity)
                         self.assertEqual((up.conv.in_channels,up.conv.mid_channels,up.conv.out_channels),(c,c,o))

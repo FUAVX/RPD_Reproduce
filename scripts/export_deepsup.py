@@ -28,6 +28,10 @@ def load_training_model(cfg, checkpoint, device='cpu'):
         raise ValueError('Checkpoint downsampling configuration mismatch')
     if 'state_dict' in payload and payload.get('feature_fusion') != cfg['backbone'].get('fusion'):
         raise ValueError('Checkpoint feature fusion configuration mismatch')
+    spatial = cfg['backbone'].get('spatial_block', 'repdw') if cfg['backbone']['name'] == 'RepDWNet' else None
+    legacy_spatial = 'repdw' if spatial is not None else None
+    if 'state_dict' in payload and payload.get('spatial_block', legacy_spatial) != spatial:
+        raise ValueError('Checkpoint spatial block mismatch (RepDW/PDC)')
     raw = payload.get('state_dict', payload)
     state = {k[len('network.'):]: v for k,v in raw.items() if k.startswith('network.')} if any(k.startswith('network.') for k in raw) else raw
     model = get_backbone(cfg)
@@ -36,6 +40,8 @@ def load_training_model(cfg, checkpoint, device='cpu'):
 
 
 def export(cfg, checkpoint, output_dir, device='cpu', fuse=False, sizes=((768,768),(1024,1024),(33,35))):
+    if fuse and cfg['backbone'].get('spatial_block') == 'pdc':
+        raise ValueError('Restored PDC exports remain unfused; PDC conversion is a separate two-step audit')
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError('Use an empty export directory to avoid stale weights/metadata')
@@ -50,6 +56,7 @@ def export(cfg, checkpoint, output_dir, device='cpu', fuse=False, sizes=((768,76
               'main_trainable_params':sum(p.numel() for p in main.parameters()),
               'downsampling_preserved':deepcopy(getattr(main, 'downsampling', None)),
               'feature_fusion_preserved':deepcopy(getattr(main, 'fusion', None)),
+              'spatial_block_preserved':getattr(main, 'spatial_block', None),
               'fusion':{'status':'not_requested','absolute_logit_tolerance':1e-4}}
     with torch.inference_mode():
         for x in probes:

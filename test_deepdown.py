@@ -149,7 +149,7 @@ class DeepDownTests(unittest.TestCase):
     def test_notebook_source_modes_and_new_ancestry_contract(self):
         nb = json.loads((ROOT/'notebook/kaggle_train_repdwnet_deepdown.ipynb').read_text())
         first = next(c for c in nb['cells'] if c['cell_type'] == 'code'); ns = {}; exec(''.join(first['source']), ns)
-        self.assertEqual(ns['GIT_REF'], 'f/deepdown'); self.assertEqual(ns['EXPERIMENT_MODE'], 'ex0')
+        self.assertEqual(ns['GIT_REF'], 'f/deepdown'); self.assertEqual(ns['EXPERIMENT_MODE'], 'alx6.3Aall.concat.pdc')
         self.assertEqual(ns['DEVICES'], 2); self.assertEqual(ns['EXPERIMENTS'], __import__('utils.deepdown_campaign', fromlist=['EXPERIMENTS']).EXPERIMENTS)
         text = '\n'.join(''.join(c['source']) for c in nb['cells'])
         for token in ['3100c6fd1f2bb9fe3887f2b15a0a306054e21c38',
